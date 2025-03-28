@@ -1,11 +1,111 @@
 #!/bin/bash
 set -euo pipefail
 
+#!/bin/bash
+set -euo pipefail
+
+# 当前版本号（每次发布新版本需要更新此号）
+SCRIPT_VERSION="1.0"
+
+# 脚本托管地址配置
+SCRIPT_MIRRORS=(
+    "https://raw.githubusercontent.com/KuwiNet/acme-cf-cert/main/acme_cert.sh"   # 国际源
+    "https://gitee.com/kuwinet/acme-cf-cert/raw/main/acme_cert.sh"              # 国内源
+)
+
 # 颜色定义
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[0;33m'
 NC='\033[0m'
+
+# 网络检测函数
+detect_network() {
+    # 尝试访问Google和Baidu，根据响应速度判断
+    local google_ping=$(ping -c 1 -W 1 google.com 2>/dev/null | grep 'time=' | awk -F'time=' '{print $2}' | awk '{print $1}')
+    local baidu_ping=$(ping -c 1 -W 1 baidu.com 2>/dev/null | grep 'time=' | awk -F'time=' '{print $2}' | awk '{print $1}')
+
+    if [[ -z "$google_ping" && -n "$baidu_ping" ]]; then
+        echo "cn"  # 国内网络
+    elif [[ -n "$google_ping" && -z "$baidu_ping" ]]; then
+        echo "intl"  # 国际网络
+    elif [[ -n "$google_ping" && -n "$baidu_ping" ]]; then
+        # 都有响应时，比较延迟
+        if [[ $(echo "$google_ping > $baidu_ping" | bc) -eq 1 ]]; then
+            echo "cn"
+        else
+            echo "intl"
+        fi
+    else
+        # 都无响应时默认使用国际源
+        echo "intl"
+    fi
+}
+
+# 获取合适的脚本URL
+get_script_url() {
+    local network=$(detect_network)
+    if [[ "$network" == "cn" ]]; then
+        echo "${SCRIPT_MIRRORS[1]}"  # 国内源
+    else
+        echo "${SCRIPT_MIRRORS[0]}"  # 国际源
+    fi
+}
+
+# 检查脚本更新
+check_for_updates() {
+    echo -e "\n${YELLOW}[!] 检查脚本更新...${NC}"
+    
+    local script_url=$(get_script_url)
+    echo -e "${GREEN}[√] 使用镜像源: ${YELLOW}$script_url${NC}"
+    
+    # 获取远程脚本版本号
+    remote_version=$(curl -sSL "$script_url" | grep -m 1 "SCRIPT_VERSION=" | cut -d'"' -f2)
+    
+    if [[ -z "$remote_version" ]]; then
+        echo -e "${YELLOW}[!] 无法获取远程版本信息${NC}"
+        return 1
+    fi
+    
+    if [[ "$SCRIPT_VERSION" != "$remote_version" ]]; then
+        echo -e "${GREEN}[√] 发现新版本: ${YELLOW}$remote_version${NC}"
+        echo -e "当前版本: ${YELLOW}$SCRIPT_VERSION${NC}"
+        
+        read -p "是否立即更新？(y/n) " -n 1 -r
+        echo
+        if [[ $REPLY =~ ^[Yy]$ ]]; then
+            update_script
+        else
+            echo -e "${YELLOW}[!] 已跳过更新${NC}"
+        fi
+    else
+        echo -e "${GREEN}[√] 当前已是最新版本${NC}"
+    fi
+}
+
+# 更新脚本
+update_script() {
+    echo -e "\n${YELLOW}[!] 正在更新脚本...${NC}"
+    
+    local script_url=$(get_script_url)
+    local script_path=$(realpath "$0")
+    
+    # 备份旧脚本
+    cp "$script_path" "$script_path.bak"
+    echo -e "${GREEN}[√] 已创建备份: ${YELLOW}$script_path.bak${NC}"
+    
+    # 下载新脚本
+    if curl -sSL "$script_url" -o "$script_path"; then
+        chmod +x "$script_path"
+        echo -e "${GREEN}[√] 脚本更新成功${NC}"
+        echo -e "${YELLOW}[!] 请重新运行脚本以使用新版本${NC}"
+        exit 0
+    else
+        echo -e "${RED}[x] 更新失败，已恢复备份${NC}"
+        mv "$script_path.bak" "$script_path"
+        exit 1
+    fi
+}
 
 # 配置存储目录
 ACME_DIR="$HOME/.acme.sh"
@@ -31,7 +131,7 @@ validate_domain() {
 # 显示帮助信息
 show_help() {
     echo -e "\n${GREEN}SSL证书自动化管理脚本${NC}"
-    echo -e "版本: 1.0"
+    echo -e "版本: 6.6 (主域名目录版)"
     echo -e "\n${YELLOW}使用方法:${NC}"
     echo "  $0                   # 申请新证书"
     echo "  $0 --list            # 查看所有域名组"
@@ -419,11 +519,17 @@ main() {
             list_all_domains
             exit 0
             ;;
+        --update)
+            update_script
+            exit 0
+            ;;
         -h|--help)
             show_help
             exit 0
             ;;
         *)
+            # 非特殊参数时检查更新
+            check_for_updates
             ;;
     esac
 
