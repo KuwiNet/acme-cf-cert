@@ -6,6 +6,10 @@
 ```bash
 curl -LO https://raw.githubusercontent.com/KuwiNet/acme-cf-cert/main/acme_cert.sh && chmod +x acme_cert.sh && ./acme_cert.sh
 ```
+### 国内网络
+```bash
+curl -LO https://gitee.com/kuwinet/acme-cf-cert/raw/main/acme_cert.sh && chmod +x acme_cert.sh && ./acme_cert.sh
+```
 
 ## 查看已配置域名
 ```bash
