@@ -2,7 +2,7 @@
 
 # 脚本信息
 SCRIPT_NAME="acme_cert.sh"
-SCRIPT_VERSION="1.3.1"
+SCRIPT_VERSION="1.3.2"
 SCRIPT_URL="https://github.com/KuwiNet/acme-cf-cert/raw/main/acme_cert.sh"
 MIRROR_URL="https://gitee.com/kuwinet/acme-cf-cert/raw/main/acme_cert.sh"
 
@@ -105,30 +105,10 @@ input_domains() {
     done
     
     echo -e "${GREEN}[√] 使用域名组: ${YELLOW}$MAIN_DOMAIN $OTHER_DOMAINS${NC}"
+    echo "$MAIN_DOMAIN $OTHER_DOMAINS" >> "$DOMAINS_FILE"
+    echo -e "${GREEN}[√] 域名组已保存: ${YELLOW}$MAIN_DOMAIN $OTHER_DOMAINS${NC}"
 }
 
-# 修改后的域名配置函数
-get_current_domains() {
-    input_domains
-    
-    local domain_group="$MAIN_DOMAIN $OTHER_DOMAINS"
-    local exists=0
-    
-    if [[ -f "$DOMAINS_FILE" ]]; then
-        while read -r line; do
-            if [[ "$line" == "$domain_group" ]]; then
-                exists=1
-                echo -e "${YELLOW}[!] 该域名组已存在，不会重复添加${NC}"
-                break
-            fi
-        done < "$DOMAINS_FILE"
-    fi
-    
-    if [[ $exists -eq 0 ]]; then
-        echo "$domain_group" >> "$DOMAINS_FILE"
-        echo -e "${GREEN}[√] 域名组已保存: ${YELLOW}$domain_group${NC}"
-    fi
-}
 # 配置检查函数
 check_required_config() {
     local missing=0
@@ -216,7 +196,7 @@ get_initial_config() {
     echo -e "${GREEN}[√] 初始配置完成${NC}"
 }
 
-# 配置加载函数（增强版）
+# 配置加载函数
 load_config() {
     # 动态加载所有现有配置
     [ -f "$TOKEN_FILE" ] && CF_Token=$(cat "$TOKEN_FILE")
