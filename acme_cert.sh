@@ -2,7 +2,7 @@
 
 # 脚本信息
 SCRIPT_NAME="acme_cert.sh"
-SCRIPT_VERSION="1.2.2"
+SCRIPT_VERSION="1.2.3"
 SCRIPT_URL="https://github.com/KuwiNet/acme-cf-cert/raw/main/acme_cert.sh"
 MIRROR_URL="https://gitee.com/kuwinet/acme-cf-cert/raw/main/acme_cert.sh"
 
@@ -407,6 +407,7 @@ main() {
     echo -e "\n管理操作:"
     echo -e "  - 查看所有域名组: ${YELLOW}$0 --list${NC}"
     echo -e "  - 清理配置: ${YELLOW}$0 --clean${NC}"
+    echo -e "  - 帮助信息: ${YELLOW}$0 --help${NC} / ${YELLOW}$0 -h${NC}"
 }
 
 # 执行入口
