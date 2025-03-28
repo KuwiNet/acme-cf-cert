@@ -1,11 +1,8 @@
 #!/bin/bash
 set -euo pipefail
 
-#!/bin/bash
-set -euo pipefail
-
-# 当前版本号（每次发布新版本需要更新此号）
-SCRIPT_VERSION="1.0"
+# 当前版本号
+SCRIPT_VERSION="1.1"
 
 # 脚本托管地址配置
 SCRIPT_MIRRORS=(
@@ -21,24 +18,27 @@ NC='\033[0m'
 
 # 网络检测函数
 detect_network() {
-    # 尝试访问Google和Baidu，根据响应速度判断
-    local google_ping=$(ping -c 1 -W 1 google.com 2>/dev/null | grep 'time=' | awk -F'time=' '{print $2}' | awk '{print $1}')
-    local baidu_ping=$(ping -c 1 -W 1 baidu.com 2>/dev/null | grep 'time=' | awk -F'time=' '{print $2}' | awk '{print $1}')
+    # 直接测试两个源的连通性，不依赖bc
+    local github_ok=0
+    local gitee_ok=0
 
-    if [[ -z "$google_ping" && -n "$baidu_ping" ]]; then
-        echo "cn"  # 国内网络
-    elif [[ -n "$google_ping" && -z "$baidu_ping" ]]; then
-        echo "intl"  # 国际网络
-    elif [[ -n "$google_ping" && -n "$baidu_ping" ]]; then
-        # 都有响应时，比较延迟
-        if [[ $(echo "$google_ping > $baidu_ping" | bc) -eq 1 ]]; then
-            echo "cn"
-        else
-            echo "intl"
-        fi
-    else
-        # 都无响应时默认使用国际源
+    # 测试GitHub连通性
+    if curl -sI --connect-timeout 2 https://github.com >/dev/null; then
+        github_ok=1
+    fi
+
+    # 测试Gitee连通性
+    if curl -sI --connect-timeout 2 https://gitee.com >/dev/null; then
+        gitee_ok=1
+    fi
+
+    # 优先使用国内源
+    if [[ $gitee_ok -eq 1 ]]; then
+        echo "cn"
+    elif [[ $github_ok -eq 1 ]]; then
         echo "intl"
+    else
+        echo "intl"  # 默认
     fi
 }
 
@@ -59,8 +59,18 @@ check_for_updates() {
     local script_url=$(get_script_url)
     echo -e "${GREEN}[√] 使用镜像源: ${YELLOW}$script_url${NC}"
     
+    # 创建临时文件
+    local tmp_file=$(mktemp)
+    
     # 获取远程脚本版本号
-    remote_version=$(curl -sSL "$script_url" | grep -m 1 "SCRIPT_VERSION=" | cut -d'"' -f2)
+    if ! curl -sSL "$script_url" -o "$tmp_file"; then
+        echo -e "${YELLOW}[!] 无法连接更新服务器${NC}"
+        rm -f "$tmp_file"
+        return 1
+    fi
+    
+    local remote_version=$(grep -m 1 "SCRIPT_VERSION=" "$tmp_file" | cut -d'"' -f2)
+    rm -f "$tmp_file"
     
     if [[ -z "$remote_version" ]]; then
         echo -e "${YELLOW}[!] 无法获取远程版本信息${NC}"
@@ -89,13 +99,28 @@ update_script() {
     
     local script_url=$(get_script_url)
     local script_path=$(realpath "$0")
+    local tmp_file=$(mktemp)
     
+    # 下载到临时文件
+    if ! curl -sSL "$script_url" -o "$tmp_file"; then
+        echo -e "${RED}[x] 下载新脚本失败${NC}"
+        rm -f "$tmp_file"
+        exit 1
+    fi
+
+    # 验证下载内容
+    if ! grep -q "SCRIPT_VERSION=" "$tmp_file"; then
+        echo -e "${RED}[x] 下载内容验证失败${NC}"
+        rm -f "$tmp_file"
+        exit 1
+    fi
+
     # 备份旧脚本
     cp "$script_path" "$script_path.bak"
     echo -e "${GREEN}[√] 已创建备份: ${YELLOW}$script_path.bak${NC}"
     
-    # 下载新脚本
-    if curl -sSL "$script_url" -o "$script_path"; then
+    # 移动新脚本
+    if mv "$tmp_file" "$script_path"; then
         chmod +x "$script_path"
         echo -e "${GREEN}[√] 脚本更新成功${NC}"
         echo -e "${YELLOW}[!] 请重新运行脚本以使用新版本${NC}"
@@ -131,7 +156,7 @@ validate_domain() {
 # 显示帮助信息
 show_help() {
     echo -e "\n${GREEN}SSL证书自动化管理脚本${NC}"
-    echo -e "版本: 6.6 (主域名目录版)"
+    echo -e "版本: $SCRIPT_VERSION"
     echo -e "\n${YELLOW}使用方法:${NC}"
     echo "  $0                   # 申请新证书"
     echo "  $0 --list            # 查看所有域名组"
