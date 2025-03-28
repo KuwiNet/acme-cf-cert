@@ -40,5 +40,5 @@ curl -LO https://gitee.com/kuwinet/acme-cf-cert/raw/main/acme_cert.sh && chmod +
 
 ## 脚本更新
 ```bash
-./acme_cert.sh --update            # 显示帮助信息
+./acme_cert.sh --update          # 脚本更新
 ```
