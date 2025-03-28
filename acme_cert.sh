@@ -2,7 +2,7 @@
 
 # 脚本信息
 SCRIPT_NAME="acme_cert.sh"
-SCRIPT_VERSION="1.3.2"
+SCRIPT_VERSION="1.3.3"
 SCRIPT_URL="https://github.com/KuwiNet/acme-cf-cert/raw/main/acme_cert.sh"
 MIRROR_URL="https://gitee.com/kuwinet/acme-cf-cert/raw/main/acme_cert.sh"
 
@@ -14,7 +14,7 @@ BLUE='\033[0;34m'
 NC='\033[0m'
 
 # 配置存储目录
-ACME_DIR="$HOME/.acme.sh/config"
+ACME_DIR="$HOME/cert/config"
 TOKEN_FILE="$ACME_DIR/token.cfg"
 EMAIL_FILE="$ACME_DIR/email.cfg"
 DOMAINS_FILE="$ACME_DIR/domains.cfg"
