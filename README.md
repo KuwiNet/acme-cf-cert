@@ -37,3 +37,8 @@ curl -LO https://gitee.com/kuwinet/acme-cf-cert/raw/main/acme_cert.sh && chmod +
 ```bash
 ./acme_cert.sh --help            # 显示帮助信息
 ```
+
+## 脚本更新
+```bash
+./acme_cert.sh --update            # 显示帮助信息
+```
