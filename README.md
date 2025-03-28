@@ -4,13 +4,13 @@
 
 > #### 需要输入 `CF_Token` ，提前在 Cloudflare 设置中生成，输入的时候不可见，输完回车即可，类似于输入密码；
 > #### 需要输入 `Email` 邮箱，随意输即可；
-> `CF_Token` 和 `Email` 输入一次就行，自动保存到配置文件 `token.cfg` 和 `email.cfg` 中；
+> `CF_Token` 和 `Email` 输入一次就行，自动保存到 `token.cfg` 和 `email.cfg` 文件中；
 > 
 > 每次运行输入的域名也会保存在 `domains.cfg` 文件中，每次一行，重复的不保存；
-> 
-> 配置文件保存目录为 `/root/.acme.sh/config` ；
 >
-> 注：不要轻易使用 `./acme_cert.sh --clean-all` 清除所有配置，它会删除 `/etc/ssl` 目录和里面所有的证书（包括设备原有的证书）。
+> 证书安装路径会保存在`configdir.cfg`文件中；
+> 
+> 配置文件保存目录为 `/root/.acme.sh/config` 。
 
 
 ## 使用
