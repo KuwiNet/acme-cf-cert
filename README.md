@@ -8,7 +8,7 @@
 > 
 > 每次运行输入的域名也会保存在 `domains.cfg` 文件中，每次一行，重复的不保存；
 >
-> 输入的证书路径会保存在`configdir.cfg`文件中，默认证书路径为 `/etc/ssl` ；
+> 输入的证书路径会保存在`configdir.cfg`文件中，默认证书路径为 `/root/cert`， 可自行设置为 `/etc/ssl` ；
 > 
 > 配置文件保存目录为 `/root/.acme.sh/config` 。
 
