@@ -2,7 +2,7 @@
 
 # 脚本信息
 SCRIPT_NAME="acme_cert.sh"
-SCRIPT_VERSION="1.2.9"
+SCRIPT_VERSION="1.3.0"
 SCRIPT_URL="https://github.com/KuwiNet/acme-cf-cert/raw/main/acme_cert.sh"
 MIRROR_URL="https://gitee.com/kuwinet/acme-cf-cert/raw/main/acme_cert.sh"
 
@@ -107,59 +107,28 @@ input_domains() {
     echo -e "${GREEN}[√] 使用域名组: ${YELLOW}$MAIN_DOMAIN $OTHER_DOMAINS${NC}"
 }
 
-# 域名配置函数
+# 修改后的域名配置函数
 get_current_domains() {
     input_domains
     
     local domain_group="$MAIN_DOMAIN $OTHER_DOMAINS"
     local exists=0
-
-    # 强制设置目录权限（关键修复）
-    sudo mkdir -p "$ACME_DIR" || {
-        echo -e "${RED}[x] 目录创建失败: $ACME_DIR${NC}"
-        exit 1
-    }
-    sudo chmod 777 "$ACME_DIR"  # 临时放宽权限用于调试
-
-    # 使用sudo确保写入权限
-    if ! sudo touch "$DOMAINS_FILE" 2>/dev/null; then
-        echo -e "${RED}[x] 无法操作文件: $DOMAINS_FILE${NC}"
-        echo -e "${YELLOW}[!] 尝试使用sudo运行脚本${NC}"
-        exit 1
-    fi
-    sudo chmod 666 "$DOMAINS_FILE"  # 临时放宽权限
-
-    # 检查重复时使用sudo读取
-    if sudo test -s "$DOMAINS_FILE"; then
-        while IFS= read -r line || [ -n "$line" ]; do
+    
+    if [[ -f "$DOMAINS_FILE" ]]; then
+        while read -r line; do
             if [[ "$line" == "$domain_group" ]]; then
                 exists=1
-                echo -e "${YELLOW}[!] 域名组已存在: ${YELLOW}$line${NC}"
+                echo -e "${YELLOW}[!] 该域名组已存在，不会重复添加${NC}"
                 break
             fi
-        done < <(sudo cat "$DOMAINS_FILE")
+        done < "$DOMAINS_FILE"
     fi
-
-    # 使用tee命令通过sudo写入
-    if [ $exists -eq 0 ]; then
-        echo "$domain_group" | sudo tee -a "$DOMAINS_FILE" >/dev/null && {
-            echo -e "${GREEN}[√] 写入成功 → ${YELLOW}$DOMAINS_FILE${NC}"
-            echo -e "${BLUE}当前内容:${NC}"
-            sudo cat "$DOMAINS_FILE"
-        } || {
-            echo -e "${RED}[x] 写入失败！请检查："
-            echo -e "1. 文件权限: $(ls -l "$DOMAINS_FILE")"
-            echo -e "2. 目录权限: $(ls -ld "$ACME_DIR")"
-            echo -e "3. 当前用户: $(whoami)${NC}"
-            exit 1
-        }
+    
+    if [[ $exists -eq 0 ]]; then
+        echo "$domain_group" >> "$DOMAINS_FILE"
+        echo -e "${GREEN}[√] 域名组已保存: ${YELLOW}$domain_group${NC}"
     fi
-
-    # 恢复安全权限（生产环境建议）
-    sudo chmod 600 "$DOMAINS_FILE"
-    sudo chmod 700 "$ACME_DIR"
 }
-
 # 配置检查函数
 check_required_config() {
     local missing=0
@@ -183,7 +152,7 @@ check_required_config() {
     return $missing
 }
 
-# 初始配置向导（增强版）
+# 初始配置向导
 get_initial_config() {
     echo -e "\n${YELLOW}[!] 开始初始配置向导${NC}"
     
