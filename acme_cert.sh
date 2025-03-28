@@ -2,7 +2,7 @@
 
 # 脚本信息
 SCRIPT_NAME="acme_cert.sh"
-SCRIPT_VERSION="1.2.6"
+SCRIPT_VERSION="1.2.7"
 SCRIPT_URL="https://github.com/KuwiNet/acme-cf-cert/raw/main/acme_cert.sh"
 MIRROR_URL="https://gitee.com/kuwinet/acme-cf-cert/raw/main/acme_cert.sh"
 
@@ -114,7 +114,11 @@ get_current_domains() {
     local domain_group="$MAIN_DOMAIN $OTHER_DOMAINS"
     local exists=0
     
+    # 确保目录存在
+    mkdir -p "$ACME_DIR"
+    
     if [[ -f "$DOMAINS_FILE" ]]; then
+        # 检查是否已存在相同域名组
         while read -r line; do
             if [[ "$line" == "$domain_group" ]]; then
                 exists=1
@@ -124,9 +128,10 @@ get_current_domains() {
         done < "$DOMAINS_FILE"
     fi
     
+    # 如果不存在则追加到文件
     if [[ $exists -eq 0 ]]; then
         echo "$domain_group" >> "$DOMAINS_FILE"
-        echo -e "${GREEN}[√] 域名组已保存: ${YELLOW}$domain_group${NC}"
+        echo -e "${GREEN}[√] 域名组已保存到: ${YELLOW}$DOMAINS_FILE${NC}"
     fi
 }
 
