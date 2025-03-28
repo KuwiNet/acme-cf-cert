@@ -1,134 +1,72 @@
 #!/bin/bash
-set -euo pipefail
 
-# 当前版本号
-SCRIPT_VERSION="1.1"
-
-# 脚本托管地址配置
-SCRIPT_MIRRORS=(
-    "https://raw.githubusercontent.com/KuwiNet/acme-cf-cert/main/acme_cert.sh"   # 国际源
-    "https://gitee.com/kuwinet/acme-cf-cert/raw/main/acme_cert.sh"              # 国内源
-)
+# 脚本信息
+SCRIPT_NAME="acme_cert.sh"
+SCRIPT_VERSION="1.1.1"
+SCRIPT_URL="https://github.com/KuwiNet/acme-cf-cert/raw/main/acme_cert.sh"
+MIRROR_URL="https://gitee.com/kuwinet/acme-cf-cert/raw/main/acme_cert.sh"
 
 # 颜色定义
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[0;33m'
+BLUE='\033[0;34m'
 NC='\033[0m'
 
-# 网络检测函数
-detect_network() {
-    # 直接测试两个源的连通性，不依赖bc
-    local github_ok=0
-    local gitee_ok=0
-
-    # 测试GitHub连通性
-    if curl -sI --connect-timeout 2 https://github.com >/dev/null; then
-        github_ok=1
-    fi
-
-    # 测试Gitee连通性
-    if curl -sI --connect-timeout 2 https://gitee.com >/dev/null; then
-        gitee_ok=1
-    fi
-
-    # 优先使用国内源
-    if [[ $gitee_ok -eq 1 ]]; then
-        echo "cn"
-    elif [[ $github_ok -eq 1 ]]; then
-        echo "intl"
-    else
-        echo "intl"  # 默认
-    fi
-}
-
-# 获取合适的脚本URL
-get_script_url() {
-    local network=$(detect_network)
-    if [[ "$network" == "cn" ]]; then
-        echo "${SCRIPT_MIRRORS[1]}"  # 国内源
-    else
-        echo "${SCRIPT_MIRRORS[0]}"  # 国际源
-    fi
-}
-
-# 检查脚本更新
-check_for_updates() {
-    echo -e "\n${YELLOW}[!] 检查脚本更新...${NC}"
+# 检查更新函数
+check_update() {
+    echo -e "${YELLOW}[!] 检查脚本更新...${NC}"
     
-    local script_url=$(get_script_url)
-    echo -e "${GREEN}[√] 使用镜像源: ${YELLOW}$script_url${NC}"
+    # 尝试从GitHub获取版本
+    remote_version=$(curl -sL "$SCRIPT_URL" | grep -m1 "SCRIPT_VERSION=" | cut -d'"' -f2)
     
-    # 创建临时文件
-    local tmp_file=$(mktemp)
+    # 如果GitHub获取失败，尝试从Gitee镜像获取
+    if [ -z "$remote_version" ]; then
+        remote_version=$(curl -sL "$MIRROR_URL" | grep -m1 "SCRIPT_VERSION=" | cut -d'"' -f2)
+        if [ -n "$remote_version" ]; then
+            echo -e "${GREEN}[√] 使用镜像源: $MIRROR_URL${NC}"
+        fi
+    fi
     
-    # 获取远程脚本版本号
-    if ! curl -sSL "$script_url" -o "$tmp_file"; then
-        echo -e "${YELLOW}[!] 无法连接更新服务器${NC}"
-        rm -f "$tmp_file"
+    if [ -z "$remote_version" ]; then
+        echo -e "${RED}[!] 无法获取远程版本信息${NC}"
         return 1
     fi
     
-    local remote_version=$(grep -m 1 "SCRIPT_VERSION=" "$tmp_file" | cut -d'"' -f2)
-    rm -f "$tmp_file"
-    
-    if [[ -z "$remote_version" ]]; then
-        echo -e "${YELLOW}[!] 无法获取远程版本信息${NC}"
-        return 1
-    fi
-    
-    if [[ "$SCRIPT_VERSION" != "$remote_version" ]]; then
-        echo -e "${GREEN}[√] 发现新版本: ${YELLOW}$remote_version${NC}"
-        echo -e "当前版本: ${YELLOW}$SCRIPT_VERSION${NC}"
-        
-        read -p "是否立即更新？(y/n) " -n 1 -r
-        echo
-        if [[ $REPLY =~ ^[Yy]$ ]]; then
+    if [ "$remote_version" != "$SCRIPT_VERSION" ]; then
+        echo -e "${YELLOW}[!] 发现新版本: $remote_version${NC}"
+        echo -e "${YELLOW}[!] 当前版本: $SCRIPT_VERSION${NC}"
+        read -p "是否更新脚本? [Y/n] " answer
+        if [[ "$answer" =~ ^[Yy]?$ ]]; then
             update_script
-        else
-            echo -e "${YELLOW}[!] 已跳过更新${NC}"
         fi
     else
         echo -e "${GREEN}[√] 当前已是最新版本${NC}"
     fi
 }
 
-# 更新脚本
+# 更新脚本函数
 update_script() {
-    echo -e "\n${YELLOW}[!] 正在更新脚本...${NC}"
+    echo -e "${YELLOW}[!] 正在更新脚本...${NC}"
     
-    local script_url=$(get_script_url)
-    local script_path=$(realpath "$0")
-    local tmp_file=$(mktemp)
-    
-    # 下载到临时文件
-    if ! curl -sSL "$script_url" -o "$tmp_file"; then
-        echo -e "${RED}[x] 下载新脚本失败${NC}"
-        rm -f "$tmp_file"
-        exit 1
-    fi
-
-    # 验证下载内容
-    if ! grep -q "SCRIPT_VERSION=" "$tmp_file"; then
-        echo -e "${RED}[x] 下载内容验证失败${NC}"
-        rm -f "$tmp_file"
-        exit 1
-    fi
-
-    # 备份旧脚本
-    cp "$script_path" "$script_path.bak"
-    echo -e "${GREEN}[√] 已创建备份: ${YELLOW}$script_path.bak${NC}"
-    
-    # 移动新脚本
-    if mv "$tmp_file" "$script_path"; then
-        chmod +x "$script_path"
-        echo -e "${GREEN}[√] 脚本更新成功${NC}"
-        echo -e "${YELLOW}[!] 请重新运行脚本以使用新版本${NC}"
+    # 尝试从GitHub更新
+    if curl -sL "$SCRIPT_URL" -o "$0.tmp"; then
+        mv "$0.tmp" "$0"
+        chmod +x "$0"
+        echo -e "${GREEN}[√] 脚本更新成功，请重新运行${NC}"
         exit 0
     else
-        echo -e "${RED}[x] 更新失败，已恢复备份${NC}"
-        mv "$script_path.bak" "$script_path"
-        exit 1
+        # GitHub更新失败，尝试从Gitee镜像更新
+        if curl -sL "$MIRROR_URL" -o "$0.tmp"; then
+            mv "$0.tmp" "$0"
+            chmod +x "$0"
+            echo -e "${GREEN}[√] 使用镜像源更新成功，请重新运行${NC}"
+            exit 0
+        else
+            rm -f "$0.tmp"
+            echo -e "${RED}[!] 脚本更新失败${NC}"
+            return 1
+        fi
     fi
 }
 
