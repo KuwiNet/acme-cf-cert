@@ -2,7 +2,7 @@
 
 # 脚本信息
 SCRIPT_NAME="acme_cert.sh"
-SCRIPT_VERSION="1.2.8"
+SCRIPT_VERSION="1.2.9"
 SCRIPT_URL="https://github.com/KuwiNet/acme-cf-cert/raw/main/acme_cert.sh"
 MIRROR_URL="https://gitee.com/kuwinet/acme-cf-cert/raw/main/acme_cert.sh"
 
@@ -113,50 +113,51 @@ get_current_domains() {
     
     local domain_group="$MAIN_DOMAIN $OTHER_DOMAINS"
     local exists=0
-    
-    # 确保目录存在（新增）
-    mkdir -p "$ACME_DIR" || {
-        echo -e "${RED}[x] 无法创建配置目录: $ACME_DIR${NC}"
+
+    # 强制设置目录权限（关键修复）
+    sudo mkdir -p "$ACME_DIR" || {
+        echo -e "${RED}[x] 目录创建失败: $ACME_DIR${NC}"
         exit 1
     }
+    sudo chmod 777 "$ACME_DIR"  # 临时放宽权限用于调试
 
-    # 初始化文件（如果不存在）
-    [ ! -f "$DOMAINS_FILE" ] && touch "$DOMAINS_FILE"
+    # 使用sudo确保写入权限
+    if ! sudo touch "$DOMAINS_FILE" 2>/dev/null; then
+        echo -e "${RED}[x] 无法操作文件: $DOMAINS_FILE${NC}"
+        echo -e "${YELLOW}[!] 尝试使用sudo运行脚本${NC}"
+        exit 1
+    fi
+    sudo chmod 666 "$DOMAINS_FILE"  # 临时放宽权限
 
-    # 检查文件是否可写（新增）
-    if [ ! -w "$DOMAINS_FILE" ]; then
-        echo -e "${RED}[x] 文件不可写: $DOMAINS_FILE${NC}"
-        echo -e "${YELLOW}[!] 尝试修复权限...${NC}"
-        chmod 600 "$DOMAINS_FILE" || {
-            echo -e "${RED}[x] 权限修复失败${NC}"
+    # 检查重复时使用sudo读取
+    if sudo test -s "$DOMAINS_FILE"; then
+        while IFS= read -r line || [ -n "$line" ]; do
+            if [[ "$line" == "$domain_group" ]]; then
+                exists=1
+                echo -e "${YELLOW}[!] 域名组已存在: ${YELLOW}$line${NC}"
+                break
+            fi
+        done < <(sudo cat "$DOMAINS_FILE")
+    fi
+
+    # 使用tee命令通过sudo写入
+    if [ $exists -eq 0 ]; then
+        echo "$domain_group" | sudo tee -a "$DOMAINS_FILE" >/dev/null && {
+            echo -e "${GREEN}[√] 写入成功 → ${YELLOW}$DOMAINS_FILE${NC}"
+            echo -e "${BLUE}当前内容:${NC}"
+            sudo cat "$DOMAINS_FILE"
+        } || {
+            echo -e "${RED}[x] 写入失败！请检查："
+            echo -e "1. 文件权限: $(ls -l "$DOMAINS_FILE")"
+            echo -e "2. 目录权限: $(ls -ld "$ACME_DIR")"
+            echo -e "3. 当前用户: $(whoami)${NC}"
             exit 1
         }
     fi
 
-    # 检查是否已存在（修复读取逻辑）
-    if [ -s "$DOMAINS_FILE" ]; then  # -s 检查文件非空
-        while IFS= read -r line || [ -n "$line" ]; do  # 修复读取最后一行的问题
-            if [[ "$line" == "$domain_group" ]]; then
-                exists=1
-                echo -e "${YELLOW}[!] 该域名组已存在，不会重复添加${NC}"
-                break
-            fi
-        done < "$DOMAINS_FILE"
-    fi
-
-    # 写入逻辑（修复追加写入）
-    if [ $exists -eq 0 ]; then
-        if echo "$domain_group" >> "$DOMAINS_FILE"; then
-            echo -e "${GREEN}[√] 域名组已保存: ${YELLOW}$domain_group${NC}"
-            echo -e "${BLUE}[i] 当前文件内容:${NC}"
-            cat "$DOMAINS_FILE"
-        else
-            echo -e "${RED}[x] 写入失败！请检查权限${NC}"
-            echo -e "${YELLOW}[!] 调试信息:${NC}"
-            ls -l "$DOMAINS_FILE"
-            exit 1
-        fi
-    fi
+    # 恢复安全权限（生产环境建议）
+    sudo chmod 600 "$DOMAINS_FILE"
+    sudo chmod 700 "$ACME_DIR"
 }
 
 # 配置检查函数
