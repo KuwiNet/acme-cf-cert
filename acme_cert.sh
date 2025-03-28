@@ -2,7 +2,7 @@
 
 # 脚本信息
 SCRIPT_NAME="acme_cert.sh"
-SCRIPT_VERSION="1.2.3"
+SCRIPT_VERSION="1.2.5"
 SCRIPT_URL="https://github.com/KuwiNet/acme-cf-cert/raw/main/acme_cert.sh"
 MIRROR_URL="https://gitee.com/kuwinet/acme-cf-cert/raw/main/acme_cert.sh"
 
@@ -14,7 +14,7 @@ BLUE='\033[0;34m'
 NC='\033[0m'
 
 # 配置存储目录
-ACME_DIR="$HOME/.acme.sh/config"
+ACME_DIR="$HOME/.acme.sh"
 TOKEN_FILE="$ACME_DIR/token.cfg"
 EMAIL_FILE="$ACME_DIR/email.cfg"
 DOMAINS_FILE="$ACME_DIR/domains.cfg"
@@ -130,7 +130,7 @@ get_current_domains() {
     fi
 }
 
-# 配置检查函数（新增智能检查）
+# 配置检查函数
 check_required_config() {
     local missing=0
     
@@ -141,6 +141,12 @@ check_required_config() {
     
     if [ ! -f "$EMAIL_FILE" ]; then
         echo -e "${RED}[x] 缺少管理员邮箱配置${NC}"
+        missing=1
+    fi
+
+    # 新增：检查证书目录配置
+    if [ ! -f "$CONFIG_DIR_FILE" ]; then
+        echo -e "${RED}[x] 缺少证书目录配置${NC}"
         missing=1
     fi
     
@@ -184,13 +190,27 @@ get_initial_config() {
         done
     fi
     
-    # 获取证书目录
-    read -p "请输入证书保存目录（默认：/etc/ssl）: " TARGET_DIR
-    TARGET_DIR=${TARGET_DIR:-"/etc/ssl"}
-    mkdir -p "$TARGET_DIR"
-    echo "$TARGET_DIR" > "$CONFIG_DIR_FILE"
-    chmod 600 "$CONFIG_DIR_FILE"
-    
+    # 只在证书目录配置不存在时获取
+    if [ ! -f "$CONFIG_DIR_FILE" ]; then
+        while true; do
+            read -p "请输入证书保存目录（默认：/etc/ssl）: " TARGET_DIR
+            TARGET_DIR=${TARGET_DIR:-"/etc/ssl"}
+            
+            if mkdir -p "$TARGET_DIR"; then
+                echo "$TARGET_DIR" > "$CONFIG_DIR_FILE"
+                chmod 600 "$CONFIG_DIR_FILE"
+                echo -e "${GREEN}[√] 证书目录已设置: ${YELLOW}$TARGET_DIR${NC}"
+                break
+            else
+                echo -e "${RED}[x] 无法创建目录: $TARGET_DIR${NC}"
+                echo -e "${YELLOW}[!] 请检查路径权限或换其他目录${NC}"
+            fi
+        done
+    else
+        TARGET_DIR=$(cat "$CONFIG_DIR_FILE")
+        echo -e "${GREEN}[√] 使用现有证书目录: ${YELLOW}$TARGET_DIR${NC}"
+    fi
+
     # 获取域名配置
     get_current_domains
     
@@ -199,13 +219,13 @@ get_initial_config() {
 
 # 配置加载函数（增强版）
 load_config() {
-    # 动态加载现有配置
+    # 动态加载所有现有配置
     [ -f "$TOKEN_FILE" ] && CF_Token=$(cat "$TOKEN_FILE")
     [ -f "$EMAIL_FILE" ] && EMAIL=$(cat "$EMAIL_FILE")
-    TARGET_DIR=$(cat "$CONFIG_DIR_FILE" 2>/dev/null || echo "/etc/ssl")
+    [ -f "$CONFIG_DIR_FILE" ] && TARGET_DIR=$(cat "$CONFIG_DIR_FILE")
     
     # 检查并补充缺失的配置
-    if [ ! -f "$TOKEN_FILE" ] || [ ! -f "$EMAIL_FILE" ]; then
+    if [ ! -f "$TOKEN_FILE" ] || [ ! -f "$EMAIL_FILE" ] || [ ! -f "$CONFIG_DIR_FILE" ]; then
         echo -e "${YELLOW}[!] 检测到不完整配置，需要补充信息${NC}"
         get_initial_config
     else
@@ -241,12 +261,13 @@ init_acme_dir() {
 clean_domains() { [ -f "$DOMAINS_FILE" ] && rm -f "$DOMAINS_FILE" && echo -e "${GREEN}[√] 域名配置已清除${NC}" || echo -e "${YELLOW}[!] 未找到域名配置文件${NC}"; }
 clean_email() { [ -f "$EMAIL_FILE" ] && rm -f "$EMAIL_FILE" && echo -e "${GREEN}[√] 邮箱配置已清除${NC}" || echo -e "${YELLOW}[!] 未找到邮箱配置文件${NC}"; }
 clean_token() { [ -f "$TOKEN_FILE" ] && rm -f "$TOKEN_FILE" && echo -e "${GREEN}[√] Token配置已清除${NC}" || echo -e "${YELLOW}[!] 未找到Token配置文件${NC}"; }
+clean_certdir(){ [ -f "$CONFIG_DIR_FILE" ] && rm -f "$CONFIG_DIR_FILE" && echo -e "${GREEN}[√] 证书目录配置已清除${NC}" || echo -e "${YELLOW}[!] 未找到证书目录配置文件${NC}"; }
 
 clean_all() {
     clean_domains
     clean_email
     clean_token
-    [ -f "$CONFIG_DIR_FILE" ] && rm -f "$CONFIG_DIR_FILE"
+    clean_certdir
     echo -e "${GREEN}[√] 所有配置清理完成${NC}"
 }
 
@@ -257,20 +278,23 @@ interactive_clean() {
         echo "1. 清除域名配置"
         echo "2. 清除邮箱配置"
         echo "3. 清除Token配置"
-        echo "4. 清除所有配置"
-        echo "5. 退出"
+        echo "4. 清除证书目录配置"
+        echo "5. 清除所有配置"
+        echo "6. 退出"
         
-        read -p "请输入选择(1-5): " choice
+        read -p "请输入选择(1-6): " choice
         case $choice in
             1) clean_domains ;;
             2) clean_email ;;
             3) clean_token ;;
-            4) clean_all ;;
-            5) break ;;
+            4) clean_certdir ;;
+            5) clean_all ;;
+            6) break ;;
             *) echo -e "${RED}[x] 无效选项，请重新输入${NC}" ;;
         esac
         
-        read -p "按回车键继续..." -r
+        read -p "按回车键返回菜单（输入 q 退出）: " -r input
+        [ "$input" = "q" ] && break
     done
 }
 
@@ -306,6 +330,40 @@ check_dependencies() {
     fi
     
     echo -e "${GREEN}[√] 所有依赖已满足${NC}"
+}
+
+# 安装acme.sh
+install_acme() {
+    echo -e "\n${YELLOW}[2/6] 检查acme.sh安装...${NC}"
+    
+    if ! command -v acme.sh &>/dev/null; then
+        echo -e "${YELLOW}[!] 正在安装acme.sh客户端...${NC}"
+        if ! curl -sL https://get.acme.sh | sh -s email="$EMAIL"; then
+            echo -e "${RED}[x] acme.sh安装失败${NC}"
+            exit 1
+        fi
+        
+        source ~/.bashrc 2>/dev/null || source ~/.profile 2>/dev/null
+        
+        if ! ~/.acme.sh/acme.sh --version &>/dev/null; then
+            echo -e "${RED}[x] acme.sh验证失败${NC}"
+            exit 1
+        fi
+        
+        if ! ~/.acme.sh/acme.sh --set-default-ca --server letsencrypt; then
+            echo -e "${RED}[x] 无法设置默认CA${NC}"
+            exit 1
+        fi
+        
+        echo -e "${GREEN}[√] acme.sh安装成功${NC}"
+    else
+        echo -e "${GREEN}[√] acme.sh已安装${NC}"
+        if ~/.acme.sh/acme.sh --upgrade; then
+            echo -e "${GREEN}[√] acme.sh已更新到最新版本${NC}"
+        else
+            echo -e "${YELLOW}[!] acme.sh更新失败（继续使用当前版本）${NC}"
+        fi
+    fi
 }
 
 # 证书申请
@@ -407,7 +465,7 @@ main() {
     echo -e "\n管理操作:"
     echo -e "  - 查看所有域名组: ${YELLOW}$0 --list${NC}"
     echo -e "  - 清理配置: ${YELLOW}$0 --clean${NC}"
-    echo -e "  - 帮助信息: ${YELLOW}$0 --help${NC} / ${YELLOW}$0 -h${NC}"
+    echo -e "  - 帮助信息: ${YELLOW}$0 --help${NC} 或 ${YELLOW}$0 -h${NC}"
 }
 
 # 执行入口
