@@ -2,7 +2,7 @@
 
 # 脚本信息
 SCRIPT_NAME="acme_cert.sh"
-SCRIPT_VERSION="1.2.1"
+SCRIPT_VERSION="1.2.2"
 SCRIPT_URL="https://github.com/KuwiNet/acme-cf-cert/raw/main/acme_cert.sh"
 MIRROR_URL="https://gitee.com/kuwinet/acme-cf-cert/raw/main/acme_cert.sh"
 
@@ -154,7 +154,7 @@ get_initial_config() {
     # 只在Token不存在时获取
     if [ ! -f "$TOKEN_FILE" ]; then
         while true; do
-            read -s -p "请输入Cloudflare API Token: " CF_Token
+            read -s -p "请输入Cloudflare API Token（输入时不可见）: " CF_Token
             echo
             if [[ -n "$CF_Token" ]]; then
                 if echo "$CF_Token" > "$TOKEN_FILE" && chmod 600 "$TOKEN_FILE"; then
@@ -258,7 +258,7 @@ interactive_clean() {
         echo "2. 清除邮箱配置"
         echo "3. 清除Token配置"
         echo "4. 清除所有配置"
-        echo "5. 返回主菜单"
+        echo "5. 退出"
         
         read -p "请输入选择(1-5): " choice
         case $choice in
