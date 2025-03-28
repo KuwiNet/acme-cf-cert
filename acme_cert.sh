@@ -2,7 +2,7 @@
 
 # 脚本信息
 SCRIPT_NAME="acme_cert.sh"
-SCRIPT_VERSION="1.2.7"
+SCRIPT_VERSION="1.2.8"
 SCRIPT_URL="https://github.com/KuwiNet/acme-cf-cert/raw/main/acme_cert.sh"
 MIRROR_URL="https://gitee.com/kuwinet/acme-cf-cert/raw/main/acme_cert.sh"
 
@@ -114,12 +114,28 @@ get_current_domains() {
     local domain_group="$MAIN_DOMAIN $OTHER_DOMAINS"
     local exists=0
     
-    # 确保目录存在
-    mkdir -p "$ACME_DIR"
-    
-    if [[ -f "$DOMAINS_FILE" ]]; then
-        # 检查是否已存在相同域名组
-        while read -r line; do
+    # 确保目录存在（新增）
+    mkdir -p "$ACME_DIR" || {
+        echo -e "${RED}[x] 无法创建配置目录: $ACME_DIR${NC}"
+        exit 1
+    }
+
+    # 初始化文件（如果不存在）
+    [ ! -f "$DOMAINS_FILE" ] && touch "$DOMAINS_FILE"
+
+    # 检查文件是否可写（新增）
+    if [ ! -w "$DOMAINS_FILE" ]; then
+        echo -e "${RED}[x] 文件不可写: $DOMAINS_FILE${NC}"
+        echo -e "${YELLOW}[!] 尝试修复权限...${NC}"
+        chmod 600 "$DOMAINS_FILE" || {
+            echo -e "${RED}[x] 权限修复失败${NC}"
+            exit 1
+        }
+    fi
+
+    # 检查是否已存在（修复读取逻辑）
+    if [ -s "$DOMAINS_FILE" ]; then  # -s 检查文件非空
+        while IFS= read -r line || [ -n "$line" ]; do  # 修复读取最后一行的问题
             if [[ "$line" == "$domain_group" ]]; then
                 exists=1
                 echo -e "${YELLOW}[!] 该域名组已存在，不会重复添加${NC}"
@@ -127,11 +143,19 @@ get_current_domains() {
             fi
         done < "$DOMAINS_FILE"
     fi
-    
-    # 如果不存在则追加到文件
-    if [[ $exists -eq 0 ]]; then
-        echo "$domain_group" >> "$DOMAINS_FILE"
-        echo -e "${GREEN}[√] 域名组已保存到: ${YELLOW}$DOMAINS_FILE${NC}"
+
+    # 写入逻辑（修复追加写入）
+    if [ $exists -eq 0 ]; then
+        if echo "$domain_group" >> "$DOMAINS_FILE"; then
+            echo -e "${GREEN}[√] 域名组已保存: ${YELLOW}$domain_group${NC}"
+            echo -e "${BLUE}[i] 当前文件内容:${NC}"
+            cat "$DOMAINS_FILE"
+        else
+            echo -e "${RED}[x] 写入失败！请检查权限${NC}"
+            echo -e "${YELLOW}[!] 调试信息:${NC}"
+            ls -l "$DOMAINS_FILE"
+            exit 1
+        fi
     fi
 }
 
