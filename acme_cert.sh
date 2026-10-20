@@ -2,17 +2,18 @@
 
 # 脚本信息
 SCRIPT_NAME="acme_cert.sh"
-SCRIPT_VERSION="1.4.0"
+SCRIPT_VERSION="1.4.1"
 SCRIPT_URL="https://github.com/KuwiNet/acme-cf-cert/raw/main/acme_cert.sh"
 MIRROR_URL="https://gitee.com/kuwinet/acme-cf-cert/raw/main/acme_cert.sh"
 
 # =============================================
-# 国内网络友好版 (v1.4.0)
+# 国内网络友好版 (v1.4.1)
 # 更新说明：
 #  - 脚本自更新/版本检查优先走 Gitee 镜像，GitHub 作为回退
 #  - acme.sh 安装优先使用 Gitee 镜像，官方源作为回退
 #  - 所有远程请求增加连接/总超时，避免国内网络卡死
 #  - 保持 Let's Encrypt 作为默认 CA（国内可直连）
+#  - 依赖安装兼容 root 无 sudo 环境；crontab 命令按发行版映射为 cron/cronie 包
 # =============================================
 
 # 颜色定义
@@ -297,8 +298,12 @@ interactive_clean() {
 check_dependencies() {
     local deps=("curl" "socat" "openssl" "crontab")
     local missing=()
+    local SUDO=""
     
     echo -e "\n${YELLOW}[1/6] 检查系统依赖...${NC}"
+    
+    # root 用户无需 sudo（很多最小化系统未安装 sudo）
+    [ "$(id -u)" -eq 0 ] || SUDO="sudo"
     
     for dep in "${deps[@]}"; do
         command -v "$dep" &>/dev/null || missing+=("$dep")
@@ -309,13 +314,29 @@ check_dependencies() {
         echo -e "${YELLOW}[!] 正在尝试安装...${NC}"
         
         if command -v apt-get &>/dev/null; then
+            # Debian/Ubuntu: crontab 命令来自 cron 包，没有名为 crontab 的包
             # 国内源优先：可自行替换为 mirrors.aliyun.com / mirrors.tuna.tsinghua.edu.cn 等
-            sudo apt-get update && sudo apt-get install -y "${missing[@]}" || {
+            local apt_pkgs=()
+            for dep in "${missing[@]}"; do
+                case "$dep" in
+                    crontab) apt_pkgs+=("cron") ;;
+                    *) apt_pkgs+=("$dep") ;;
+                esac
+            done
+            $SUDO apt-get update && $SUDO apt-get install -y "${apt_pkgs[@]}" || {
                 echo -e "${RED}[x] 依赖安装失败${NC}";
                 exit 1;
             }
         elif command -v yum &>/dev/null; then
-            sudo yum install -y "${missing[@]}" || {
+            # CentOS/RHEL: crontab 命令来自 cronie 包
+            local yum_pkgs=()
+            for dep in "${missing[@]}"; do
+                case "$dep" in
+                    crontab) yum_pkgs+=("cronie") ;;
+                    *) yum_pkgs+=("$dep") ;;
+                esac
+            done
+            $SUDO yum install -y "${yum_pkgs[@]}" || {
                 echo -e "${RED}[x] 依赖安装失败${NC}";
                 exit 1;
             }
