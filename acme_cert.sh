@@ -2,9 +2,18 @@
 
 # 脚本信息
 SCRIPT_NAME="acme_cert.sh"
-SCRIPT_VERSION="1.3.3"
+SCRIPT_VERSION="1.4.0"
 SCRIPT_URL="https://github.com/KuwiNet/acme-cf-cert/raw/main/acme_cert.sh"
 MIRROR_URL="https://gitee.com/kuwinet/acme-cf-cert/raw/main/acme_cert.sh"
+
+# =============================================
+# 国内网络友好版 (v1.4.0)
+# 更新说明：
+#  - 脚本自更新/版本检查优先走 Gitee 镜像，GitHub 作为回退
+#  - acme.sh 安装优先使用 Gitee 镜像，官方源作为回退
+#  - 所有远程请求增加连接/总超时，避免国内网络卡死
+#  - 保持 Let's Encrypt 作为默认 CA（国内可直连）
+# =============================================
 
 # 颜色定义
 RED='\033[0;31m'
@@ -20,11 +29,17 @@ EMAIL_FILE="$ACME_DIR/email.cfg"
 DOMAINS_FILE="$ACME_DIR/domains.cfg"
 CONFIG_DIR_FILE="$ACME_DIR/configdir.cfg"
 
+# 带超时的 curl 封装（国内网络下避免无限等待）
+curl_get() {
+    curl -sL --connect-timeout 8 --max-time 30 "$@"
+}
+
 # 检查更新函数
 check_update() {
     echo -e "${YELLOW}[!] 检查脚本更新...${NC}"
-    remote_version=$(curl -sL "$SCRIPT_URL" | grep -m1 "SCRIPT_VERSION=" | cut -d'"' -f2)
-    [ -z "$remote_version" ] && remote_version=$(curl -sL "$MIRROR_URL" | grep -m1 "SCRIPT_VERSION=" | cut -d'"' -f2)
+    # 国内网络优先访问 Gitee 镜像，失败后回退 GitHub
+    remote_version=$(curl_get "$MIRROR_URL" | grep -m1 "SCRIPT_VERSION=" | cut -d'"' -f2)
+    [ -z "$remote_version" ] && remote_version=$(curl_get "$SCRIPT_URL" | grep -m1 "SCRIPT_VERSION=" | cut -d'"' -f2)
 
     if [ -z "$remote_version" ]; then
         echo -e "${RED}[!] 无法获取远程版本信息${NC}"
@@ -43,15 +58,16 @@ check_update() {
 # 更新脚本函数
 update_script() {
     echo -e "${YELLOW}[!] 正在更新脚本...${NC}"
-    if curl -sL "$SCRIPT_URL" -o "$0.tmp"; then
+    # 国内网络优先使用 Gitee 镜像下载
+    if curl_get "$MIRROR_URL" -o "$0.tmp"; then
+        mv "$0.tmp" "$0"
+        chmod +x "$0"
+        echo -e "${GREEN}[√] 使用Gitee镜像更新成功，请重新运行${NC}"
+        exit 0
+    elif curl_get "$SCRIPT_URL" -o "$0.tmp"; then
         mv "$0.tmp" "$0"
         chmod +x "$0"
         echo -e "${GREEN}[√] 脚本更新成功，请重新运行${NC}"
-        exit 0
-    elif curl -sL "$MIRROR_URL" -o "$0.tmp"; then
-        mv "$0.tmp" "$0"
-        chmod +x "$0"
-        echo -e "${GREEN}[√] 使用镜像源更新成功，请重新运行${NC}"
         exit 0
     else
         rm -f "$0.tmp"
@@ -293,6 +309,7 @@ check_dependencies() {
         echo -e "${YELLOW}[!] 正在尝试安装...${NC}"
         
         if command -v apt-get &>/dev/null; then
+            # 国内源优先：可自行替换为 mirrors.aliyun.com / mirrors.tuna.tsinghua.edu.cn 等
             sudo apt-get update && sudo apt-get install -y "${missing[@]}" || {
                 echo -e "${RED}[x] 依赖安装失败${NC}";
                 exit 1;
@@ -317,9 +334,13 @@ install_acme() {
     
     if ! command -v acme.sh &>/dev/null; then
         echo -e "${YELLOW}[!] 正在安装acme.sh客户端...${NC}"
-        if ! curl -sL https://get.acme.sh | sh -s email="$EMAIL"; then
-            echo -e "${RED}[x] acme.sh安装失败${NC}"
-            exit 1
+        # 国内网络优先使用 Gitee 镜像安装，失败后回退官方源
+        if ! curl -sL --connect-timeout 10 --max-time 90 https://gitee.com/neilpang/acme.sh/raw/master/install.sh | sh -s email="$EMAIL"; then
+            echo -e "${YELLOW}[!] Gitee镜像安装失败，尝试官方源...${NC}"
+            if ! curl -sL --connect-timeout 10 --max-time 90 https://get.acme.sh | sh -s email="$EMAIL"; then
+                echo -e "${RED}[x] acme.sh安装失败${NC}"
+                exit 1
+            fi
         fi
         
         source ~/.bashrc 2>/dev/null || source ~/.profile 2>/dev/null
@@ -337,6 +358,7 @@ install_acme() {
         echo -e "${GREEN}[√] acme.sh安装成功${NC}"
     else
         echo -e "${GREEN}[√] acme.sh已安装${NC}"
+        # acme.sh 自带 GitHub→Gitee 自动回退，国内可正常升级
         if ~/.acme.sh/acme.sh --upgrade; then
             echo -e "${GREEN}[√] acme.sh已更新到最新版本${NC}"
         else
