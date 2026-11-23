@@ -12,9 +12,9 @@
 # shellcheck disable=SC2086,SC2015,SC1090,SC2181
 
 SCRIPT_NAME="acme_cert.sh"
-SCRIPT_VERSION="2.0.0"
+SCRIPT_VERSION="2.0.1"
 SCRIPT_URL="https://raw.githubusercontent.com/KuwiNet/acme-cf-cert/main/acme_cert.sh"
-MIRROR_URL="https://gitee.com/kuwinet/acme-cf-cert/raw/main/acme_cert.sh"
+MIRROR_URL="https://acme.kuwi.net/acme_cert.sh"
 REPO_URL="https://github.com/KuwiNet/acme-cf-cert"
 
 set -o pipefail
