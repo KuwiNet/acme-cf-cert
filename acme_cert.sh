@@ -12,9 +12,11 @@
 # shellcheck disable=SC2086,SC2015,SC1090,SC2181
 
 SCRIPT_NAME="acme_cert.sh"
-SCRIPT_VERSION="2.0.1"
+SCRIPT_VERSION="2.0.2"
 SCRIPT_URL="https://raw.githubusercontent.com/KuwiNet/acme-cf-cert/main/acme_cert.sh"
-MIRROR_URL="https://acme.kuwi.net/acme_cert.sh"
+# acme.kuwi.net 现在只托管 install.sh（引导安装器），自更新改走 Gitee 镜像，
+# 失败再回退 GitHub raw；顺序反过来在境内会明显变慢。
+MIRROR_URL="https://gitee.com/kuwinet/acme-cf-cert/raw/main/acme_cert.sh"
 REPO_URL="https://github.com/KuwiNet/acme-cf-cert"
 
 set -o pipefail
@@ -1385,8 +1387,14 @@ version_gt() {  # $1 > $2 时返回 0
     return 1
 }
 
-valid_script() {
-    [ -s "$1" ] && head -1 "$1" | grep -q '^#!.*bash' && grep -q '^SCRIPT_VERSION=' "$1"
+valid_script() {  # 体积 + shebang + 版本行 + 语法，四道都过才算可用正文
+    local f="$1" sz
+    [ -s "$f" ] || return 1
+    sz=$(wc -c <"$f" 2>/dev/null || echo 0)
+    [ "$sz" -ge 20000 ] || return 1
+    head -1 "$f" | grep -q '^#!.*bash' || return 1
+    grep -q '^SCRIPT_VERSION=' "$f" || return 1
+    bash -n "$f" 2>/dev/null
 }
 
 update_script() {

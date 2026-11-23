@@ -77,7 +77,7 @@ curl -fsSL https://raw.githubusercontent.com/KuwiNet/acme-cf-cert/main/install.s
 | `./acme_cert.sh --config` | 重新进入配置向导（改服务商/凭据/邮箱/目录/密钥/CA） |
 | `./acme_cert.sh --check` | 环境自检（依赖、acme.sh、dnsapi、配置、证书到期） |
 | `./acme_cert.sh --update-acme` | 升级 acme.sh 客户端 |
-| `./acme_cert.sh --update` | 更新本脚本（`acme.kuwi.net` 优先、GitHub raw 回退，校验后覆盖并留 `.bak`） |
+| `./acme_cert.sh --update` | 更新本脚本（Gitee 镜像优先、GitHub raw 回退，校验后覆盖并留 `.bak`） |
 | `./acme_cert.sh --clean` | 交互式清理配置 |
 | `./acme_cert.sh --clean-all` | 清除全部配置（加 `-y` 不再确认） |
 | `./acme_cert.sh --clean-auth` | 仅清除 DNS 凭据（`--clean-token` 为兼容别名） |
