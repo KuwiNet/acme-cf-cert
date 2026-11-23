@@ -14,12 +14,12 @@
 ## 快速开始
 
 ```bash
-# GitHub
-curl -LO https://raw.githubusercontent.com/KuwiNet/acme-cf-cert/main/acme_cert.sh && chmod +x acme_cert.sh && ./acme_cert.sh
-
-# 国内网络（Gitee 镜像）
-curl -LO https://gitee.com/kuwinet/acme-cf-cert/raw/main/acme_cert.sh && chmod +x acme_cert.sh && ./acme_cert.sh
+curl -fsSLO https://acme.kuwi.net/acme_cert.sh && chmod +x acme_cert.sh && ./acme_cert.sh
 ```
+
+> 一个地址即可，不再区分国内外线路（CDN 自动就近回源）。
+> URL 必须带 `/acme_cert.sh` 这一段：`-O` 是从 URL 路径取文件名的，裸域名 `https://acme.kuwi.net` 会报 `Remote file name has no length!`。
+> 建议保留 `-f`，避免 CDN 偶发 5xx 时把错误页存成 `acme_cert.sh` 然后被 `chmod +x` 执行。
 
 首次运行会依次询问（输入凭据时不回显）：
 
@@ -193,7 +193,7 @@ Let's Encrypt 对同一域名组有「每周 5 张重复证书」限制。调试
 `./acme_cert.sh --config`，或重新用 `-p` + `--cred` 跑一次。切换服务商时会自动清理其它服务商的旧凭据。
 
 **6. 提示 `当前不是以文件方式运行或文件不可写`？**
-`curl ... | bash` 这种管道执行方式没有可写的脚本文件，`--update` 用不了；请先 `curl -LO` 保存成文件再执行。
+`curl ... | bash` 这种管道执行方式没有可写的脚本文件，`--update` 用不了；请先按上面的 `curl -fsSLO https://acme.kuwi.net/acme_cert.sh` 保存成文件再执行。
 
 **7. 想看最终执行的 acme.sh 命令？**
 加 `--dry-run`；或直接查看 `acme.sh` 自己的日志：`~/.acme.sh/acme.sh.log`。
