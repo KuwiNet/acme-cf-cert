@@ -12,7 +12,12 @@
 # shellcheck disable=SC2086,SC2015,SC1090,SC2181
 
 SCRIPT_NAME="acme_cert.sh"
-SCRIPT_VERSION="2.2.0"
+SCRIPT_VERSION="2.2.1"
+# 提示用户"怎么再跑一次"时用的写法：按当前实际调用路径给出
+case "${0:-}" in
+    */*) SCRIPT_CMD="${0}" ;;
+    *)   SCRIPT_CMD="./$SCRIPT_NAME" ;;
+esac
 SCRIPT_URL="https://raw.githubusercontent.com/KuwiNet/acme-cf-cert/main/acme_cert.sh"
 # acme.kuwi.net 现在只托管 install.sh（引导安装器），自更新改走 Gitee 镜像，
 # 失败再回退 GitHub raw；顺序反过来在境内会明显变慢。
@@ -287,7 +292,7 @@ run_add_provider() {  # --add-provider 名称 --dnsapi dns_xxx [--label ..] [--c
         esac
     fi
     [ -n "$dnsapi" ] || die "添加服务商需要 --dnsapi dns_xxx（acme.sh 中 dnsapi/*.sh 的名字，如 dns_myprov）
-   例: $SCRIPT_NAME --dnsapi dns_myprov --cred MY_API_KEY=xxx --cred-optional MY_REGION"
+   例: $SCRIPT_CMD --dnsapi dns_myprov --cred MY_API_KEY=xxx --cred-optional MY_REGION"
     case "$dnsapi" in
         dns_*) : ;;
         *) die "dnsapi 名称必须以 dns_ 开头: $dnsapi" ;;
@@ -343,13 +348,13 @@ run_add_provider() {  # --add-provider 名称 --dnsapi dns_xxx [--label ..] [--c
     if [ -n "$dnsfile" ] && [ ! -f "$dnsfile" ]; then
         warn "acme.sh 中没有 $dnsapi.sh，请把该脚本放到 $ACME_HOME/dnsapi/ 后重试"
     fi
-    info "后续使用: $SCRIPT_NAME -p $name -d example.com"
+    info "后续使用: $SCRIPT_CMD -p $name -d example.com"
     return 0
 }
 
 run_bind() {  # --bind <编号或域名> -p <服务商>：把已有域名组绑定到指定服务商
     local sel="$OPT_BIND" gp="$OPT_PROVIDER" i=0 g idx=""
-    [ -n "$gp" ] || die "--bind 需要配合 -p 指定服务商，例如: $SCRIPT_NAME --bind 1 -p aliyun"
+    [ -n "$gp" ] || die "--bind 需要配合 -p 指定服务商，例如: $SCRIPT_CMD --bind 1 -p aliyun"
     case " $PROVIDERS " in
         *" $gp "*) : ;;
         *) die "不支持的 DNS 服务商: $gp" ;;
@@ -422,7 +427,7 @@ show_providers() {
         [ -z "$keys" ] && printf '      %-13s %s\n' "" "无需凭据（manual 手动 DNS）"
     done
     eline
-    info "新增自建服务商: $SCRIPT_NAME --dnsapi dns_xxx --cred VAR=xxx [--cred-optional VAR2]"
+    info "新增自建服务商: $SCRIPT_CMD --dnsapi dns_xxx --cred VAR=xxx [--cred-optional VAR2]"
 }
 
 cred_keys() {
@@ -824,7 +829,7 @@ wizard() {
     eline
     if [ "$mode" = "edit" ]; then
         info "修改配置（直接回车保留当前值）"
-        info "域名组可单独绑定服务商: $SCRIPT_NAME --bind <编号> -p <服务商>"
+        info "域名组可单独绑定服务商: $SCRIPT_CMD --bind <编号> -p <服务商>"
     else
         info "首次运行配置向导（只需一次，之后自动复用）"
     fi
@@ -939,7 +944,7 @@ input_domains() {
             [ -z "$GROUP_PROV" ] && { GROUP_PROV="$PROVIDER"; break; }
             case " $PROVIDERS " in
                 *" $GROUP_PROV "*) break ;;
-                *) err "未知服务商: $GROUP_PROV（可用 $SCRIPT_NAME --providers 查看）" ;;
+                *) err "未知服务商: $GROUP_PROV（可用 $SCRIPT_CMD --providers 查看）" ;;
             esac
         done
     fi
@@ -1080,7 +1085,7 @@ ensure_config() {
         if [ "$ASSUME_YES" = "1" ]; then
             die "配置不完整，缺少: $missing
    非交互(-y)模式请用参数补齐，例如:
-     $SCRIPT_NAME -p cloudflare --cred CF_Token=xxx -e you@example.com -o /root/cert -d example.com -y"
+     $SCRIPT_CMD -p cloudflare --cred CF_Token=xxx -e you@example.com -o /root/cert -d example.com -y"
         fi
         warn "配置不完整，缺少: $missing"
         wizard init
@@ -1270,7 +1275,7 @@ check_dnsapi() {  # $1=服务商（省略则用默认服务商）
             *" $p "*)
                 err "自建服务商需自己放置该脚本，acme.sh 升级不会带上它:"
                 err "  cp <你的 $name.sh> $ACME_HOME/dnsapi/" ;;
-            *) err "请先执行: $SCRIPT_NAME --update-acme" ;;
+            *) err "请先执行: $SCRIPT_CMD --update-acme" ;;
         esac
         return 1
     fi
@@ -1757,7 +1762,7 @@ update_script() {
     chmod +x "$0" 2>/dev/null || true
     rm -f "$tmp"
     ok "已从 $source 更新到 v$rv（旧版本备份为 $0.bak）"
-    msg "  请重新运行: $SCRIPT_NAME"
+    msg "  请重新运行: $SCRIPT_CMD"
 }
 
 check_update() {
@@ -1796,8 +1801,8 @@ show_help() {
 ${BOLD}${SCRIPT_NAME}${NC} v${SCRIPT_VERSION} —— ACME 证书申请 / 安装 / 自动续期
 
 ${BOLD}用法${NC}
-  ${SCRIPT_NAME}                     交互式签发（首次运行自动进入配置向导）
-  ${SCRIPT_NAME} [命令] [选项]
+  ${SCRIPT_CMD}                     交互式签发（首次运行自动进入配置向导）
+  ${SCRIPT_CMD} [命令] [选项]
 
 ${BOLD}命令${NC}
   --issue             申请 / 安装证书（默认命令）
@@ -1853,26 +1858,26 @@ ${BOLD}配置文件${NC}
 
 ${BOLD}示例${NC}
   # 首次运行：交互填写服务商、凭据、邮箱、证书目录、续期命令与域名
-  ${SCRIPT_NAME}
+  ${SCRIPT_CMD}
 
   # 阿里云 DNS 签发通配符证书（凭据用参数传入）
-  ${SCRIPT_NAME} -p aliyun -d "example.com,*.example.com" \\
+  ${SCRIPT_CMD} -p aliyun -d "example.com,*.example.com" \\
       --cred Ali_Key=xxx --cred Ali_Secret=yyy -e me@example.com -y
 
   # Cloudflare Token（环境变量）非交互签发
-  CF_Token=xxxx ${SCRIPT_NAME} -p cloudflare -d "example.com" -e me@example.com -y
+  CF_Token=xxxx ${SCRIPT_CMD} -p cloudflare -d "example.com" -e me@example.com -y
 
   # 两个域名组各用自己的服务商（凭据可以并存）
-  ${SCRIPT_NAME} -p cloudflare --cred CF_Token=xxx -d example.com -e me@x.com -y
-  ${SCRIPT_NAME} -p aliyun --cred Ali_Key=xxx --cred Ali_Secret=yyy -d shop.com -e me@x.com -y
+  ${SCRIPT_CMD} -p cloudflare --cred CF_Token=xxx -d example.com -e me@x.com -y
+  ${SCRIPT_CMD} -p aliyun --cred Ali_Key=xxx --cred Ali_Secret=yyy -d shop.com -e me@x.com -y
   # 之后改绑: --bind 1 -p dnspod
 
   # 注册 acme.sh 已有、但脚本未内置的服务商，然后照常使用
-  ${SCRIPT_NAME} --dnsapi dns_myprov --cred MY_API_KEY=xxx --cred-optional MY_REGION
-  ${SCRIPT_NAME} -p myprov -d "example.com,*.example.com"
+  ${SCRIPT_CMD} --dnsapi dns_myprov --cred MY_API_KEY=xxx --cred-optional MY_REGION
+  ${SCRIPT_CMD} -p myprov -d "example.com,*.example.com"
 
   # 先在测试环境验证流程，确认无误后去掉 -s
-  ${SCRIPT_NAME} -d "example.com" -s
+  ${SCRIPT_CMD} -d "example.com" -s
 
 ${BOLD}说明${NC}
   · 凭据只在申请/续期时通过环境变量传给 acme.sh，脚本另存于 600 权限配置文件中
@@ -1974,7 +1979,7 @@ parse_args() {
                 shift ;;
             *)
                 err "未知参数: $1"
-                msg "  使用 $SCRIPT_NAME --help 查看用法"
+                msg "  使用 $SCRIPT_CMD --help 查看用法"
                 exit 2 ;;
         esac
         shift
@@ -2008,9 +2013,9 @@ print_result() {
     msg "  CA 链    : $cdir/ca.pem"
     msg "  到期时间 : $(cert_expiry "$cdir/fullchain.pem")"
     eline
-    msg "  查看配置 : $SCRIPT_NAME --list"
-    msg "  环境自检 : $SCRIPT_NAME --check"
-    msg "  手动续期 : $SCRIPT_NAME --renew"
+    msg "  查看配置 : $SCRIPT_CMD --list"
+    msg "  环境自检 : $SCRIPT_CMD --check"
+    msg "  手动续期 : $SCRIPT_CMD --renew"
 }
 
 run_issue() {
