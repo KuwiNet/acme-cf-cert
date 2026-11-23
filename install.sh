@@ -20,7 +20,7 @@
 #
 # 仓库: https://github.com/KuwiNet/acme-cf-cert
 
-INSTALL_VERSION="1.0.0"
+INSTALL_VERSION="1.0.1"
 TARGET_NAME="acme_cert.sh"
 MIN_SIZE=15000
 
@@ -47,6 +47,7 @@ $TARGET_NAME 安装引导 v$INSTALL_VERSION
 选项:
   -d, --dir DIR        保存目录（默认当前目录）
   -n, --no-run         只下载保存，不立即执行
+  -r, --run            即使没有交互终端也执行（默认会自动跳过）
   -m, --mirror MODE    下载源：auto（默认，测速选择）| github | gitee | cdn
   -f, --force          忽略测速结果，强行重试全部源直到成功
       --min-version V  拒绝低于该版本的正文（默认 2.0.0）
@@ -62,6 +63,7 @@ EOF
 
 DEST_DIR=""
 RUN=1
+RUN_FORCE=0
 MIRROR="auto"
 FORCE=0
 MIN_VERSION="2.0.0"
@@ -72,6 +74,7 @@ while [ $# -gt 0 ]; do
         -d|--dir)          DEST_DIR="${2:-}"; shift 2 ;;
         --dir=*)           DEST_DIR="${1#*=}"; shift ;;
         -n|--no-run)       RUN=0; shift ;;
+        -r|--run)          RUN=1; RUN_FORCE=1; shift ;;
         -m|--mirror)       MIRROR="${2:-auto}"; shift 2 ;;
         --mirror=*)        MIRROR="${1#*=}"; shift ;;
         -f|--force)        FORCE=1; shift ;;
@@ -271,11 +274,20 @@ fi
 
 # 交给正文自己接管终端输入：curl | bash 场景下 stdin 是管道，
 # 正文需要 /dev/tty 才能交互，这里直接把 tty 接过来
-info "启动 $TARGET_NAME …"
-eline="────────────────────────────────────────────────────────────"
-printf '%s\n' "${DIM}${eline}${NC}"
-if tty_ok; then
-    exec bash "$TARGET_PATH" ${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"} </dev/tty
-else
-    exec bash "$TARGET_PATH" ${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}
+# 交互终端存在才自动运行：没有终端时（ssh 非交互、CI、cron）向导必然读到 EOF，
+# 与其报错退出，不如把已下载的文件和后续命令告诉用户
+if [ "$RUN" = 1 ]; then
+    if tty_ok || [ -t 0 ] || [ "$RUN_FORCE" = 1 ]; then
+        info "启动 $TARGET_NAME …"
+        printf '%s\n' "${DIM}────────────────────────────────────────────────────────────${NC}"
+        if tty_ok; then
+            exec bash "$TARGET_PATH" ${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"} </dev/tty
+        else
+            exec bash "$TARGET_PATH" ${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}
+        fi
+    fi
+    warn "当前没有交互终端，未自动运行（首次配置向导需要终端输入）"
+    info "手动运行: $TARGET_PATH"
+    info "要跳过下载直接跑后续命令，可用 -r/--run 强制执行"
+    exit 0
 fi

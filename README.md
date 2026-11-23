@@ -27,12 +27,13 @@ curl -fsSL https://raw.githubusercontent.com/KuwiNet/acme-cf-cert/main/install.s
 1. 探测 GitHub / Gitee / `acme.kuwi.net` 三个源，选**当前网络最快**的那个拉取 `acme_cert.sh`
 2. 校验正文（体积、shebang、`SCRIPT_VERSION`、`bash -n`），错误页或旧版本一律丢弃并换源
 3. 保存为 `acme_cert.sh`（当前目录，或 `-d` 指定目录）并 `chmod +x`
-4. 立即运行（`-n` 只保存不运行），后面 `--` 之后的参数会原样传给 `acme_cert.sh`
+4. 立即运行（`-n` 只保存不运行；没有交互终端时只保存并提示，`-r` 可强制运行），`--` 之后的参数原样传给 `acme_cert.sh`
 
 | 引导脚本参数 | 说明 |
 |---|---|
 | `-d, --dir DIR` | 保存目录（默认当前目录） |
 | `-n, --no-run` | 只下载保存，不立即运行 |
+| `-r, --run` | 即使没有交互终端也执行（默认无终端时自动跳过） |
 | `-m, --mirror auto\|github\|gitee\|cdn` | 强制下载源，默认 `auto`（测速） |
 | `-f, --force` | 忽略探测，逐源重试直到成功 |
 | `--min-version V` | 拒绝低于该版本的正文（默认 `2.0.0`） |
