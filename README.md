@@ -12,9 +12,13 @@
 ---
 
 ## 快速开始
-
+一次命令，可重使用
 ```bash
 curl -fsSL https://acme.kuwi.net | bash
+```
+
+```bash
+./acme_cert.sh
 ```
 ### 备用
 ```bash
