@@ -20,7 +20,7 @@
 #
 # 仓库: https://github.com/KuwiNet/acme-cf-cert
 
-INSTALL_VERSION="1.0.1"
+INSTALL_VERSION="1.0.2"
 TARGET_NAME="acme_cert.sh"
 MIN_SIZE=15000
 
@@ -48,7 +48,7 @@ $TARGET_NAME 安装引导 v$INSTALL_VERSION
   -d, --dir DIR        保存目录（默认当前目录）
   -n, --no-run         只下载保存，不立即执行
   -r, --run            即使没有交互终端也执行（默认会自动跳过）
-  -m, --mirror MODE    下载源：auto（默认，测速选择）| github | gitee | cdn
+  -m, --mirror MODE    下载源：auto（默认，测速选择）| github | gitee | cdn（需 ACME_SRC_CDN）
   -f, --force          忽略测速结果，强行重试全部源直到成功
       --min-version V  拒绝低于该版本的正文（默认 2.0.0）
   -h, --help           显示帮助
@@ -100,10 +100,9 @@ fi
 # 允许用环境变量替换源（自建镜像 / 内网测试时可覆盖）
 SRC_GITHUB="${ACME_SRC_GITHUB:-https://raw.githubusercontent.com/KuwiNet/acme-cf-cert/main/$TARGET_NAME}"
 SRC_GITEE="${ACME_SRC_GITEE:-https://gitee.com/kuwinet/acme-cf-cert/raw/main/$TARGET_NAME}"
-# acme.kuwi.net 是自有入口（通常直接指向本仓库的 install.sh）。
-# 若该路径返回的是引导脚本本身（体积 < MIN_SIZE 或没有 SCRIPT_VERSION），
-# 探测阶段就会把它判掉，不会拿错误内容覆盖正文。
-SRC_CDN="${ACME_SRC_CDN:-https://acme.kuwi.net/$TARGET_NAME}"
+# acme.kuwi.net 现在托管的是本引导脚本，不再是 acme_cert.sh 的下载地址；
+# 需要第三源（自建镜像/内网）时用 ACME_SRC_CDN=<url> 指定，留空则只用 GitHub + Gitee。
+SRC_CDN="${ACME_SRC_CDN:-}"
 
 UA="acme-cert-install/$INSTALL_VERSION"
 
@@ -172,13 +171,22 @@ valid_body() {  # 正文字节流校验，防止把错误页/半截文件当成�
 }
 
 # ============================ 选源 ============================
+# 输出可用源，每行一个（空值跳过）
+emit_srcs() {
+    local u
+    for u in "$@"; do
+        [ -n "$u" ] || continue
+        printf '%s\n' "$u"
+    done
+}
+
 # 依据实测结果挑选：优先最快且能通过探测的源；--mirror 可强制指定
 pick_sources() {
     local gh="$1" gt="$2" cdn="$3" mode="$4"
     case "$mode" in
-        github) printf '%s %s %s\n' "$gh" "$gt" "$cdn" ;;
-        gitee)  printf '%s %s %s\n' "$gt" "$gh" "$cdn" ;;
-        cdn)    printf '%s %s %s\n' "$cdn" "$gh" "$gt" ;;
+        github) emit_srcs "$gh" "$gt" "$cdn" ;;
+        gitee)  emit_srcs "$gt" "$gh" "$cdn" ;;
+        cdn)    emit_srcs "$cdn" "$gh" "$gt" ;;
         auto)
             # 两边都探，按耗时升序；CDN 作为最后兜底
             local gh_t gt_t
@@ -189,16 +197,16 @@ pick_sources() {
                 gh_sec="${gh_t##* }"
                 gt_sec="${gt_t##* }"
                 if awk -v a="$gh_sec" -v b="$gt_sec" 'BEGIN{exit !(a<=b)}'; then
-                    printf '%s %s %s\n' "$gh" "$gt" "$cdn"
+                    emit_srcs "$gh" "$gt" "$cdn"
                 else
-                    printf '%s %s %s\n' "$gt" "$gh" "$cdn"
+                    emit_srcs "$gt" "$gh" "$cdn"
                 fi
             elif [ -n "${gh_t:-}" ]; then
-                printf '%s %s %s\n' "$gh" "$gt" "$cdn"
+                emit_srcs "$gh" "$gt" "$cdn"
             elif [ -n "${gt_t:-}" ]; then
-                printf '%s %s %s\n' "$gt" "$gh" "$cdn"
+                emit_srcs "$gt" "$gh" "$cdn"
             else
-                printf '%s %s %s\n' "$gh" "$gt" "$cdn"
+                emit_srcs "$gh" "$gt" "$cdn"
             fi
             ;;
     esac
@@ -208,7 +216,7 @@ detect_summary() {
     case "$MIRROR" in
         github) printf 'GitHub（--mirror 指定）' ;;
         gitee)  printf 'Gitee（--mirror 指定）' ;;
-        cdn)    printf 'acme.kuwi.net（--mirror 指定）' ;;
+        cdn)    printf '自定义 CDN 源（--mirror 指定）' ;;
         auto)
             if [ "$CHOSEN" = "$SRC_GITHUB" ]; then printf 'GitHub（测速较快）'
             elif [ "$CHOSEN" = "$SRC_GITEE" ]; then printf 'Gitee（GitHub 不可用或较慢）'
@@ -224,6 +232,10 @@ detect_summary() {
 
 TMP_FILE="$DEST_DIR/.${TARGET_NAME}.part.$$"
 trap 'rm -f "$TMP_FILE"' EXIT INT TERM
+
+# -m cdn 必须显式给源：内置的 acme.kuwi.net 地址已不再提供 acme_cert.sh
+[ "$MIRROR" = cdn ] && [ -z "$SRC_CDN" ] \
+    && die "未配置 CDN 源：请用 ACME_SRC_CDN=<url> 指定（本引导不再内置 CDN 地址）"
 
 read -r -a CANDIDATES <<<"$(pick_sources "$SRC_GITHUB" "$SRC_GITEE" "$SRC_CDN" "$MIRROR")"
 CHOSEN=""
