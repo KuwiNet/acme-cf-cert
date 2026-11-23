@@ -14,11 +14,35 @@
 ## 快速开始
 
 ```bash
-# 常规
-curl -fsSLO --retry 3 --retry-delay 2 https://acme.kuwi.net/acme_cert.sh && chmod +x acme_cert.sh && ./acme_cert.sh
+# 一条命令：引导脚本自动测速选源，下载校验后保存并运行
+curl -fsSL https://gitee.com/kuwinet/acme-cf-cert/raw/main/install.sh | bash
 
-# 国内（Gitee 镜像）
-curl -fsSLO --retry 3 --retry-delay 2 https://gitee.com/kuwinet/acme-cf-cert/raw/main/acme_cert.sh && chmod +x acme_cert.sh && ./acme_cert.sh
+# Gitee 不可用时的备用入口
+curl -fsSL https://raw.githubusercontent.com/KuwiNet/acme-cf-cert/main/install.sh | bash
+```
+
+`install.sh` 自己只用一次、不落盘，它会：
+
+1. 探测 GitHub / Gitee / `acme.kuwi.net` 三个源，选**当前网络最快**的那个拉取 `acme_cert.sh`
+2. 校验正文（体积、shebang、`SCRIPT_VERSION`、`bash -n`），错误页或旧版本一律丢弃并换源
+3. 保存为 `acme_cert.sh`（当前目录，或 `-d` 指定目录）并 `chmod +x`
+4. 立即运行（`-n` 只保存不运行），后面 `--` 之后的参数会原样传给 `acme_cert.sh`
+
+| 引导脚本参数 | 说明 |
+|---|---|
+| `-d, --dir DIR` | 保存目录（默认当前目录） |
+| `-n, --no-run` | 只下载保存，不立即运行 |
+| `-m, --mirror auto\|github\|gitee\|cdn` | 强制下载源，默认 `auto`（测速） |
+| `-f, --force` | 忽略探测，逐源重试直到成功 |
+| `--min-version V` | 拒绝低于该版本的正文（默认 `2.0.0`） |
+| `-- <参数>` | 传给 `acme_cert.sh`，如 `-- --dry-run` |
+
+```bash
+# 只保存不运行，装到 /usr/local/bin
+curl -fsSL https://gitee.com/kuwinet/acme-cf-cert/raw/main/install.sh | bash -s -- -n -d /usr/local/bin
+
+# 装完直接带参数执行（非交互签发示例）
+curl -fsSL https://gitee.com/kuwinet/acme-cf-cert/raw/main/install.sh | bash -s -- -- -y -p aliyun --cred Ali_Key=x
 ```
 
 首次运行会依次询问（输入凭据时不回显）：
@@ -193,7 +217,7 @@ Let's Encrypt 对同一域名组有「每周 5 张重复证书」限制。调试
 `./acme_cert.sh --config`，或重新用 `-p` + `--cred` 跑一次。切换服务商时会自动清理其它服务商的旧凭据。
 
 **6. 提示 `当前不是以文件方式运行或文件不可写`？**
-`curl ... | bash` 这种管道执行方式没有可写的脚本文件，`--update` 用不了；请先按上面的命令把脚本保存成文件再执行。
+用上面的 `install.sh` 引导安装不会遇到这个问题：它会先把 `acme_cert.sh` 存盘再执行，`--update` 正常可用。只有把正文直接管道执行（`curl ... acme_cert.sh | bash`）才会没有可写文件。
 
 **7. 想看最终执行的 acme.sh 命令？**
 加 `--dry-run`；或直接查看 `acme.sh` 自己的日志：`~/.acme.sh/acme.sh.log`。
