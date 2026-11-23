@@ -12,7 +12,7 @@
 # shellcheck disable=SC2086,SC2015,SC1090,SC2181
 
 SCRIPT_NAME="acme_cert.sh"
-SCRIPT_VERSION="2.0.3"
+SCRIPT_VERSION="2.1.0"
 SCRIPT_URL="https://raw.githubusercontent.com/KuwiNet/acme-cf-cert/main/acme_cert.sh"
 # acme.kuwi.net 现在只托管 install.sh（引导安装器），自更新改走 Gitee 镜像，
 # 失败再回退 GitHub raw；顺序反过来在境内会明显变慢。
@@ -81,11 +81,20 @@ ACTION="issue"
 OPT_DOMAIN=""
 OPT_PROVIDER=""
 CRED_PAIRS=()
+OPT_OPT_CREDS=()          # --cred-optional（自建服务商的可选变量）
+OPT_PROVIDER_NAME=""      # --add-provider / --remove-provider 的服务商名
+OPT_DNSAPI=""             # --dnsapi dns_xxx
+OPT_LABEL=""              # --label 显示名
 
 PROVIDERS="cloudflare aliyun dnspod tencent huaweicloud aws digitalocean vultr linode godaddy namecheap namesilo cloudns porkbun manual"
+EXTRA_FILE="$CONF_DIR/providers.conf"   # 自建服务商注册表（--add-provider 写入）
+EXTRA_NAMES=""                          # 本次运行已加载的自建服务商名
 
 # ============================ DNS 服务商注册表 ============================
 provider_label() {
+    local _ep
+    _ep="$(extra_field "$1" 2)"
+    [ -n "$_ep" ] && { printf '%s' "$_ep"; return 0; }
     case "$1" in
         cloudflare)   printf 'Cloudflare' ;;
         aliyun)       printf '阿里云 DNS' ;;
@@ -108,6 +117,9 @@ provider_label() {
 
 # acme.sh 的 dnsapi 脚本名（与其 dnsapi/*.sh 一一对应）
 provider_dnsapi() {
+    local _ep
+    _ep="$(extra_field "$1" 3)"
+    [ -n "$_ep" ] && { printf '%s' "$_ep"; return 0; }
     case "$1" in
         cloudflare)   printf 'dns_cf' ;;
         aliyun)       printf 'dns_ali' ;;
@@ -130,6 +142,14 @@ provider_dnsapi() {
 # 凭据表：变量名|说明|是否密文(1/0)|是否可留空(1/0)
 # 变量名必须与 acme.sh 对应 dnsapi 脚本读取的环境变量一致
 provider_creds() {
+    local _req _opt _k
+    _req="$(extra_field "$1" 4)"
+    _opt="$(extra_field "$1" 5)"
+    if [ -n "$_req$_opt" ]; then
+        for _k in ${_req//,/ }; do printf '%s|自建服务商变量|1|0\n' "$_k"; done
+        for _k in ${_opt//,/ }; do printf '%s|自建服务商变量|0|1\n' "$_k"; done
+        return 0
+    fi
     case "$1" in
         cloudflare)
             printf '%s\n' \
@@ -202,11 +222,177 @@ provider_hint() {
         cloudns)      printf 'ClouDNS → API → 开启 API 并获取 Auth ID / Auth Password' ;;
         porkbun)      printf 'Porkbun → API Access → 创建 API Key 与 Secret Key' ;;
         manual)       printf '签发过程中会暂停，提示你到 DNS 服务商处手动添加 TXT 记录' ;;
+        *)
+            if [ -n "$(extra_field "$1" 3)" ]; then
+                printf '自建服务商：按 acme.sh %s 读取上述变量' "$(extra_field "$1" 3)"
+            fi ;;
     esac
 }
 
 # 全部凭据变量名（带缓存，避免反复生成）
 CRED_KEYS_CACHE=""
+# ---------- 自建服务商：运行时注册 acme.sh 的 dnsapi ----------
+# 注册表每行: 名称|显示名|dnsapi|必填变量(逗号)|可选变量(逗号)
+extra_field() {  # $1=名称 $2=字段序号：1 名称 / 2 显示名 / 3 dnsapi / 4 必填 / 5 可选
+    [ -f "$EXTRA_FILE" ] || return 0
+    awk -F'|' -v n="$1" -v f="$2" '$1==n {print $f; exit}' "$EXTRA_FILE" 2>/dev/null
+}
+
+load_extra_providers() {
+    CRED_KEYS_CACHE=""
+    [ -f "$EXTRA_FILE" ] || return 0
+    chmod 600 "$EXTRA_FILE" 2>/dev/null || true
+    local line name
+    while IFS= read -r line || [ -n "$line" ]; do
+        line="${line%$'\r'}"
+        case "$line" in ''|'#'*) continue ;; esac
+        name="${line%%|*}"
+        [ -z "$name" ] && continue
+        case " $PROVIDERS " in *" $name "*) continue ;; esac
+        PROVIDERS="$PROVIDERS $name"
+        EXTRA_NAMES="$EXTRA_NAMES $name"
+    done < "$EXTRA_FILE"
+    return 0
+}
+
+save_extra_provider() {  # $1=名称 $2=显示名 $3=dnsapi $4=必填 $5=可选
+    local tmp="$EXTRA_FILE.tmp.$$" line name
+    mkdir -p "$CONF_DIR" 2>/dev/null || die "无法创建配置目录: $CONF_DIR"
+    {
+        printf '%s\n' "# 自建 DNS 服务商（由 $SCRIPT_NAME --add-provider 生成）"
+        printf '%s\n' "# 名称|显示名|dnsapi|必填变量(逗号)|可选变量(逗号)"
+        if [ -f "$EXTRA_FILE" ]; then
+            while IFS= read -r line || [ -n "$line" ]; do
+                line="${line%$'\r'}"
+                case "$line" in ''|'#'*) continue ;; esac
+                name="${line%%|*}"
+                [ "$name" = "$1" ] && continue
+                printf '%s\n' "$line"
+            done < "$EXTRA_FILE"
+        fi
+        printf '%s|%s|%s|%s|%s\n' "$1" "$2" "$3" "$4" "$5"
+    } > "$tmp" || die "写入 $EXTRA_FILE 失败"
+    mv -f "$tmp" "$EXTRA_FILE" || die "保存 $EXTRA_FILE 失败"
+    chmod 600 "$EXTRA_FILE"
+    return 0
+}
+
+run_add_provider() {  # --add-provider 名称 --dnsapi dns_xxx [--label ..] [--cred K=V] [--cred-optional K[=V]]
+    local name="$OPT_PROVIDER_NAME" label dnsapi req="" opt="" pair k v dnsfile
+    dnsapi="$OPT_DNSAPI"
+    if [ -z "$dnsapi" ]; then
+        case " $EXTRA_NAMES " in
+            *" $name "*) dnsapi="$(extra_field "$name" 3)" ;;   # 只改凭据/显示名时复用原 dnsapi
+        esac
+    fi
+    [ -n "$dnsapi" ] || die "添加服务商需要 --dnsapi dns_xxx（acme.sh 中 dnsapi/*.sh 的名字，如 dns_myprov）
+   例: $SCRIPT_NAME --dnsapi dns_myprov --cred MY_API_KEY=xxx --cred-optional MY_REGION"
+    case "$dnsapi" in
+        dns_*) : ;;
+        *) die "dnsapi 名称必须以 dns_ 开头: $dnsapi" ;;
+    esac
+    case "$dnsapi" in
+        *[!A-Za-z0-9_]*) die "dnsapi 名称只能含字母/数字/下划线: $dnsapi" ;;
+    esac
+    [ -z "$name" ] && name="${dnsapi#dns_}"
+    case "$name" in
+        ''|*[!a-z0-9_-]*) die "服务商名称只能用小写字母/数字/_/-: $name" ;;
+    esac
+    case " $EXTRA_NAMES " in
+        *" $name "*) : ;;
+        *) case " $PROVIDERS " in
+               *" $name "*) die "名称 $name 与内置服务商重名，请换一个（如 mydns）" ;;
+           esac ;;
+    esac
+
+    label="$OPT_LABEL"
+    label="${label//|/}"
+    label="${label//$'\n'/}"
+    [ -z "$label" ] && { label="$(extra_field "$name" 2)"; [ -z "$label" ] && label="$name"; }
+
+    for pair in ${CRED_PAIRS[@]+"${CRED_PAIRS[@]}"}; do
+        k="${pair%%=*}"; v="${pair#*=}"
+        case "$k" in ''|*[!A-Za-z0-9_]*) die "凭据变量名不合法: $k（只能含字母/数字/下划线）" ;; esac
+        if [ "$v" = "$pair" ] || [ -z "$v" ]; then
+            die "--cred $k 缺少值（格式 KEY=VALUE）"
+        fi
+        set_var "$k" "$v"
+        case " ,$req," in *",$k,"*) : ;; *) req="${req:+$req,}$k" ;; esac
+    done
+    for pair in ${OPT_OPT_CREDS[@]+"${OPT_OPT_CREDS[@]}"}; do
+        k="${pair%%=*}"; v="${pair#*=}"
+        case "$k" in ''|*[!A-Za-z0-9_]*) die "凭据变量名不合法: $k（只能含字母/数字/下划线）" ;; esac
+        [ "$v" != "$pair" ] && set_var "$k" "$v"
+        case " ,$opt," in *",$k,"*) : ;; *) opt="${opt:+$opt,}$k" ;; esac
+    done
+    [ -n "$req$opt" ] || warn "未登记任何凭据变量，该服务商将按 manual 方式使用（DNS 记录需手工添加）"
+
+    save_extra_provider "$name" "$label" "$dnsapi" "$req" "$opt"
+    load_extra_providers
+    [ -z "$PROVIDER" ] && PROVIDER="$name"
+    save_conf
+
+    eline
+    ok "已注册自建服务商: $label（$name → $dnsapi）"
+    [ -n "$req" ] && kv "必填变量" "$req"
+    [ -n "$opt" ] && kv "可选变量" "$opt"
+    kv "注册表" "$EXTRA_FILE"
+    detect_acme >/dev/null 2>&1 || true
+    dnsfile="${ACME_HOME:+$ACME_HOME/dnsapi/$dnsapi.sh}"
+    if [ -n "$dnsfile" ] && [ ! -f "$dnsfile" ]; then
+        warn "acme.sh 中没有 $dnsapi.sh，请把该脚本放到 $ACME_HOME/dnsapi/ 后重试"
+    fi
+    info "后续使用: $SCRIPT_NAME -p $name -d example.com"
+    return 0
+}
+
+run_remove_provider() {
+    local name="$OPT_PROVIDER_NAME" tmp="$EXTRA_FILE.tmp.$$" line n conf_prov
+    case " $EXTRA_NAMES " in
+        *" $name "*) : ;;
+        *) die "没有自建服务商 $name（内置服务商不能删除；可用 --providers 查看）" ;;
+    esac
+    {
+        printf '%s\n' "# 自建 DNS 服务商（由 $SCRIPT_NAME --add-provider 生成）"
+        printf '%s\n' "# 名称|显示名|dnsapi|必填变量(逗号)|可选变量(逗号)"
+        n=0
+        while IFS= read -r line || [ -n "$line" ]; do
+            line="${line%$'\r'}"
+            case "$line" in ''|'#'*) continue ;; esac
+            [ "${line%%|*}" = "$name" ] && continue
+            printf '%s\n' "$line"
+            n=$((n + 1))
+        done < "$EXTRA_FILE"
+    } > "$tmp" || die "写入 $EXTRA_FILE 失败"
+    if [ "$n" -eq 0 ]; then rm -f "$EXTRA_FILE"; else mv -f "$tmp" "$EXTRA_FILE" && chmod 600 "$EXTRA_FILE"; fi
+    conf_prov="$(awk -F= '$1=="PROVIDER"{print $2}' "$CONF_FILE" 2>/dev/null)"
+    ok "已移除自建服务商: $name（其凭据仍保留在配置中，可用 --clean-auth 清理）"
+    [ "$conf_prov" = "$name" ] && warn "当前配置指向 $name，请用 -p 指定其他服务商"
+    return 0
+}
+
+show_providers() {
+    local p i=0 keys k o mark
+    eline
+    info "DNS 服务商（前置 * 为自建，共 $(set -- $PROVIDERS; echo $#) 家）"
+    eline
+    for p in $PROVIDERS; do
+        i=$((i + 1))
+        keys=""
+        while IFS='|' read -r k _ _ o; do
+            [ -z "$k" ] && continue
+            if [ "$o" = "1" ]; then keys="$keys $k(可留空)"; else keys="$keys $k"; fi
+        done < <(provider_creds "$p")
+        mark=" "
+        case " $EXTRA_NAMES " in *" $p "*) mark="*" ;; esac
+        printf '  %2d)%s %-13s %-24s %s\n' "$i" "$mark" "$p" "$(provider_label "$p")" "$(provider_dnsapi "$p")"
+        [ -n "$keys" ] && printf '      %-13s %s\n' "" "变量:$keys"
+        [ -z "$keys" ] && printf '      %-13s %s\n' "" "无需凭据（manual 手动 DNS）"
+    done
+    eline
+    info "新增自建服务商: $SCRIPT_NAME --dnsapi dns_xxx --cred VAR=xxx [--cred-optional VAR2]"
+}
+
 cred_keys() {
     if [ -z "$CRED_KEYS_CACHE" ]; then
         local p
@@ -967,7 +1153,12 @@ check_dnsapi() {
     name="$(provider_dnsapi "$PROVIDER")"
     if [ ! -f "$ACME_HOME/dnsapi/$name.sh" ]; then
         err "当前 acme.sh 未包含 $name（$ACME_HOME/dnsapi/$name.sh）"
-        err "请先执行: $SCRIPT_NAME --update-acme"
+        case " $EXTRA_NAMES " in
+            *" $PROVIDER "*)
+                err "自建服务商需自己放置该脚本，acme.sh 升级不会带上它:"
+                err "  cp <你的 $name.sh> $ACME_HOME/dnsapi/" ;;
+            *) err "请先执行: $SCRIPT_NAME --update-acme" ;;
+        esac
         return 1
     fi
     return 0
@@ -1503,6 +1694,9 @@ ${BOLD}命令${NC}
   --clean-domains     仅清除域名组
   --clean-email       仅清除邮箱
   --clean-certdir     仅清除证书目录设置
+  --providers         列出内置与自建的 DNS 服务商及其凭据变量
+  --add-provider NAME 注册自建服务商（需配 --dnsapi，凭据用 --cred）
+  --remove-provider N 移除自建服务商
   -h, --help          显示本帮助
   -V, --version       显示版本号
 
@@ -1523,12 +1717,16 @@ ${BOLD}选项${NC}
   -y, --yes             非交互模式：全部使用参数与已保存配置，缺项直接报错
       --cred KEY=VALUE  指定 DNS 凭据，可重复:
                           --cred Ali_Key=xxx --cred Ali_Secret=yyy
+      --dnsapi NAME     自建服务商的 acme.sh dnsapi（dns_xxx），等价 --add-provider
+      --label TEXT      自建服务商的显示名
+      --cred-optional K 自建服务商的可选变量，可重复（KEY 或 KEY=VALUE）
       --no-update-check 跳过脚本版本检查
       --dry-run         只打印将要执行的 acme.sh 命令，不实际执行
 
 ${BOLD}配置文件${NC}
   $CONF_FILE  （权限 600，含凭据，请勿分享）
   $DOMAINS_FILE  （每行一个域名组，主域名在前，重复的不会重复写入）
+  $EXTRA_FILE  （自建服务商注册表，--add-provider 写入）
 
 ${BOLD}示例${NC}
   # 首次运行：交互填写服务商、凭据、邮箱、证书目录、续期命令与域名
@@ -1540,6 +1738,10 @@ ${BOLD}示例${NC}
 
   # Cloudflare Token（环境变量）非交互签发
   CF_Token=xxxx ${SCRIPT_NAME} -p cloudflare -d "example.com" -e me@example.com -y
+
+  # 注册 acme.sh 已有、但脚本未内置的服务商，然后照常使用
+  ${SCRIPT_NAME} --dnsapi dns_myprov --cred MY_API_KEY=xxx --cred-optional MY_REGION
+  ${SCRIPT_NAME} -p myprov -d "example.com,*.example.com"
 
   # 先在测试环境验证流程，确认无误后去掉 -s
   ${SCRIPT_NAME} -d "example.com" -s
@@ -1576,6 +1778,25 @@ parse_args() {
             --clean-domains)      ACTION="clean-domains" ;;
             --clean-email)        ACTION="clean-email" ;;
             --clean-certdir)      ACTION="clean-certdir" ;;
+            --providers)          ACTION="providers" ;;
+            --add-provider)
+                [ $# -ge 2 ] || die "$1 缺少参数（服务商名称）"
+                OPT_PROVIDER_NAME="$2"; ACTION="add-provider"; shift ;;
+            --remove-provider)
+                [ $# -ge 2 ] || die "$1 缺少参数（服务商名称）"
+                OPT_PROVIDER_NAME="$2"; ACTION="remove-provider"; shift ;;
+            --dnsapi)
+                if [ $# -ge 2 ] && [ "${2#--}" = "$2" ]; then
+                    OPT_DNSAPI="$2"; [ "$ACTION" = "remove-provider" ] || ACTION="add-provider"; shift
+                else
+                    ACTION="providers"   # 只敲 --dnsapi 时列出全部服务商
+                fi ;;
+            --label)
+                [ $# -ge 2 ] || die "$1 缺少参数（显示名）"
+                OPT_LABEL="$2"; shift ;;
+            --cred-optional)
+                [ $# -ge 2 ] || die "$1 缺少参数（KEY 或 KEY=VALUE）"
+                OPT_OPT_CREDS+=("$2"); shift ;;
 
             -d|--domain)
                 [ $# -ge 2 ] || die "$1 缺少参数"
@@ -1719,13 +1940,22 @@ main() {
     chmod 700 "$CONF_DIR" 2>/dev/null || true
 
     migrate_legacy
+    load_extra_providers   # 先加载自建表，load_conf 才能认出自建服务商的变量名
     load_conf
+
+    # 注册/移除自建服务商在读配置之后、apply_overrides 之前处理：
+    # 既不会丢掉已有配置，也不必让新服务商的未知变量过一遍 --cred 校验
+    case "$ACTION" in
+        add-provider)    run_add_provider; exit 0 ;;
+        remove-provider) run_remove_provider; exit 0 ;;
+    esac
     apply_overrides
     resolve_creds_from_env
 
     case "$ACTION" in
         list|status)   show_overview "$ACTION"; exit 0 ;;
         check)         do_check; exit 0 ;;
+        providers)     show_providers; exit 0 ;;
         clean)         interactive_clean; exit 0 ;;
         clean-all)     clean_all; exit 0 ;;
         clean-auth)    clean_auth; exit 0 ;;

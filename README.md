@@ -66,9 +66,23 @@ curl -fsSL https://raw.githubusercontent.com/KuwiNet/acme-cf-cert/main/install.s
 | `porkbun` | Porkbun | `dns_porkbun` | `PORKBUN_API_KEY` `PORKBUN_SECRET_API_KEY` | - |
 | `manual` | 手动 DNS（任意服务商/自建 DNS） | 手工验证 | - | - |
 
-> 需要其它服务商时，可在 `provider_creds` / `provider_dnsapi` / `provider_label` 三处照样式新增；
-> acme.sh 已内置 200+ 家 dnsapi，名字见 [dnsapi 目录](https://github.com/acmesh-official/acme.sh/tree/master/dnsapi)。
-> 不想改脚本也可以先用 `manual` 模式，或把 acme.sh 环境变量直接导出后手工调用 acme.sh。
+### 自建服务商（不内置也能用）
+
+acme.sh 自带 200+ 家 dnsapi（名字见 [dnsapi 目录](https://github.com/acmesh-official/acme.sh/tree/master/dnsapi)），脚本没内置的可以运行时注册，不用改代码：
+
+```bash
+# 注册：名称默认取 dns_ 后面的部分（这里叫 myprov）
+./acme_cert.sh --dnsapi dns_myprov --cred MY_API_KEY=xxx --cred-optional MY_REGION
+
+# 之后就和内置服务商一样用
+./acme_cert.sh -p myprov -d "example.com,*.example.com"
+```
+
+- `--cred KEY=VALUE`：必填变量，值同时写入配置（可重复）
+- `--cred-optional KEY[=VALUE]`：可选变量，只登记变量名即可
+- `--add-provider NAME --label "显示名"`：自定义名称/显示名（`--dnsapi` 可省，但首次注册必须给）
+- `--providers` 查看全部（自建的会带 `*`），`--remove-provider NAME` 移除
+- 自建服务商的 dnsapi 脚本要自己放进 `~/.acme.sh/dnsapi/`（`--update-acme` 不会装上它）
 
 ---
 
@@ -92,6 +106,9 @@ curl -fsSL https://raw.githubusercontent.com/KuwiNet/acme-cf-cert/main/install.s
 | `./acme_cert.sh --clean-email` | 仅清除邮箱 |
 | `./acme_cert.sh --clean-certdir` | 仅清除证书目录设置 |
 | `./acme_cert.sh --help` / `-h` | 帮助 |
+| `./acme_cert.sh --providers` | 列出内置 + 自建的 DNS 服务商及其凭据变量 |
+| `./acme_cert.sh --add-provider NAME --dnsapi dns_xxx` | 注册自建服务商（凭据用 `--cred` 一起给） |
+| `./acme_cert.sh --remove-provider NAME` | 移除自建服务商 |
 | `./acme_cert.sh --version` / `-V` | 版本号 |
 
 ## 参数
@@ -109,6 +126,9 @@ curl -fsSL https://raw.githubusercontent.com/KuwiNet/acme-cf-cert/main/install.s
 | `-f, --force` | 强制重新签发（**会消耗限额**，慎用） |
 | `-y, --yes` | 非交互：全部取参数/已存配置，缺项直接报错退出 |
 | `--cred KEY=VALUE` | 指定凭据，可重复；值里含 `=` 也没问题 |
+| `--dnsapi dns_xxx` | 注册自建服务商（等价 `--add-provider`，名称取 `dns_` 之后的部分） |
+| `--label NAME` | 自建服务商的显示名 |
+| `--cred-optional KEY[=VALUE]` | 自建服务商的可选变量，可重复 |
 | `--no-update-check` | 跳过脚本版本检查 |
 | `--dry-run` | 只打印将执行的 acme.sh 命令，不实际执行（不写配置、不装 cron） |
 
@@ -150,6 +170,7 @@ CF_Token=xxxx ./acme_cert.sh -p cloudflare -d "example.com" -e me@example.com -y
 |---|---|
 | `~/.acme_cert/config.conf` | 服务商、凭据、邮箱、证书目录、密钥类型、CA、reload 命令（权限 `600`，目录 `700`） |
 | `~/.acme_cert/domains.conf` | 每行一个域名组，主域名在前；重复组不会重复写入 |
+| `~/.acme_cert/providers.conf` | 自建服务商注册表（名称/显示名/dnsapi/变量名，权限 `600`） |
 | `~/.acme_cert/.update_check` | 版本检查缓存（24 小时内不再联网） |
 
 - 配置目录可用环境变量 `ACME_CERT_CONF_DIR` 覆盖（例如装到 `/etc/acme_cert`）。
