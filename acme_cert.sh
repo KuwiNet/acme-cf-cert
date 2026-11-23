@@ -12,7 +12,7 @@
 # shellcheck disable=SC2086,SC2015,SC1090,SC2181
 
 SCRIPT_NAME="acme_cert.sh"
-SCRIPT_VERSION="2.2.1"
+SCRIPT_VERSION="2.2.2"
 # 提示用户"怎么再跑一次"时用的写法：按当前实际调用路径给出
 case "${0:-}" in
     */*) SCRIPT_CMD="${0}" ;;
@@ -1426,8 +1426,43 @@ ensure_cronjob() {
 }
 
 # ============================ 概览 / 自检 ============================
+# 显示宽度：中文/全角/emoji 占 2 列。printf 的 %-Ns 只按字符数补齐，中文表头会错位。
+_dw() {
+    local s="$1" w=0 i=0 ch cp
+    while [ "$i" -lt "${#s}" ]; do
+        ch="${s:i:1}"
+        printf -v cp '%d' "'$ch" 2>/dev/null || cp=32
+        if { [ "$cp" -ge 11904 ] && [ "$cp" -le 42191 ]; } \
+           || { [ "$cp" -ge 44032 ] && [ "$cp" -le 55203 ]; } \
+           || { [ "$cp" -ge 63744 ] && [ "$cp" -le 64255 ]; } \
+           || { [ "$cp" -ge 65280 ] && [ "$cp" -le 65376 ]; } \
+           || { [ "$cp" -ge 65504 ] && [ "$cp" -le 65510 ]; } \
+           || [ "$cp" -ge 127744 ]; then
+            w=$((w + 2))
+        else
+            w=$((w + 1))
+        fi
+        i=$((i + 1))
+    done
+    _DW=$w
+}
+
+disp_width() {
+    _dw "$1"
+    printf '%d' "$_DW"
+}
+
+# 右补空格到指定显示宽度
+pad_display() {
+    local n
+    _dw "$1"
+    n=$(($2 - _DW))
+    [ "$n" -lt 0 ] && n=0
+    printf '%s%*s' "$1" "$n" ''
+}
+
 cert_expiry() {
-    local f="$1" end epoch now days
+    local f="$1" end epoch now days short
     if [ ! -f "$f" ]; then
         printf '未安装'
         return 0
@@ -1435,18 +1470,20 @@ cert_expiry() {
     end="$(openssl x509 -in "$f" -noout -enddate 2>/dev/null | cut -d= -f2)"
     [ -z "$end" ] && { printf '无法读取'; return 0; }
     epoch="$(date -d "$end" +%s 2>/dev/null || true)"
+    short="$(date -d "$end" '+%Y-%m-%d' 2>/dev/null || true)"
+    [ -z "$short" ] && short="$end"
     if [ -n "$epoch" ]; then
         now="$(date +%s)"
         days=$(((epoch - now) / 86400))
         if [ "$days" -lt 0 ]; then
-            printf '%s（已过期）' "$end"
+            printf '%s（已过期）' "$short"
         elif [ "$days" -le 15 ]; then
-            printf '%s（剩余 %d 天 ⚠）' "$end" "$days"
+            printf '%s（剩 %d 天 ⚠）' "$short" "$days"
         else
-            printf '%s（剩余 %d 天）' "$end" "$days"
+            printf '%s（剩 %d 天）' "$short" "$days"
         fi
     else
-        printf '%s' "$end"
+        printf '%s' "$short"
     fi
 }
 
@@ -1471,7 +1508,8 @@ show_overview() {
     if [ ${#DGROUPS[@]} -eq 0 ]; then
         warn "还没有配置任何域名组"
     else
-        printf '  %-3s %-32s %-22s %-26s %s\n' "#" "域名组" "DNS 服务商" "证书目录" "证书到期"
+        local -a r_id=() r_g=() r_p=() r_d=() r_e=()
+        local w_id=1 w_g w_p w_d w_e x
         i=1
         for g in "${DGROUPS[@]}"; do
             main="$(group_main "$g")"
@@ -1480,7 +1518,30 @@ show_overview() {
             local disp="$cdir"
             # shellcheck disable=SC2088  # 这里就是要输出字面量 ~
             case "$disp" in "$HOME"/*) disp="~/${disp#"$HOME"/}" ;; esac
-            printf '  %-3s %-32s %-22s %-26s %s\n' "$i" "$g" "$(provider_label "$(group_provider "$g")")" "$disp" "$exp"
+            r_id+=("$i")
+            r_g+=("$g")
+            r_p+=("$(provider_label "$(group_provider "$g")")")
+            r_d+=("$disp")
+            r_e+=("$exp")
+            i=$((i + 1))
+        done
+        # 列宽取「表头与实际内容」的显示宽度最大值，列间统一 2 空格
+        _dw "域名组"; w_g=$_DW
+        _dw "DNS 服务商"; w_p=$_DW
+        _dw "证书目录"; w_d=$_DW
+        _dw "证书到期"; w_e=$_DW
+        for x in "${r_g[@]}"; do _dw "$x"; [ "$_DW" -gt "$w_g" ] && w_g=$_DW; done
+        for x in "${r_p[@]}"; do _dw "$x"; [ "$_DW" -gt "$w_p" ] && w_p=$_DW; done
+        for x in "${r_d[@]}"; do _dw "$x"; [ "$_DW" -gt "$w_d" ] && w_d=$_DW; done
+        for x in "${r_e[@]}"; do _dw "$x"; [ "$_DW" -gt "$w_e" ] && w_e=$_DW; done
+        printf '  %s  %s  %s  %s  %s\n' \
+            "$(pad_display '#' "$w_id")" "$(pad_display '域名组' "$w_g")" \
+            "$(pad_display 'DNS 服务商' "$w_p")" "$(pad_display '证书目录' "$w_d")" "证书到期"
+        i=0
+        while [ "$i" -lt ${#r_g[@]} ]; do
+            printf '  %s  %s  %s  %s  %s\n' \
+                "$(pad_display "${r_id[$i]}" "$w_id")" "$(pad_display "${r_g[$i]}" "$w_g")" \
+                "$(pad_display "${r_p[$i]}" "$w_p")" "$(pad_display "${r_d[$i]}" "$w_d")" "${r_e[$i]}"
             i=$((i + 1))
         done
     fi
