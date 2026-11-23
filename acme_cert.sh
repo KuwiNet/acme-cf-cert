@@ -12,7 +12,7 @@
 # shellcheck disable=SC2086,SC2015,SC1090,SC2181
 
 SCRIPT_NAME="acme_cert.sh"
-SCRIPT_VERSION="2.0.2"
+SCRIPT_VERSION="2.0.3"
 SCRIPT_URL="https://raw.githubusercontent.com/KuwiNet/acme-cf-cert/main/acme_cert.sh"
 # acme.kuwi.net 现在只托管 install.sh（引导安装器），自更新改走 Gitee 镜像，
 # 失败再回退 GitHub raw；顺序反过来在境内会明显变慢。
@@ -1358,15 +1358,17 @@ interactive_clean() {
 }
 
 # ============================ 自我更新 ============================
-fetch_remote_version() {
-    local v=""
-    v="$(curl -fsSL --connect-timeout 8 --max-time 20 "$MIRROR_URL" 2>/dev/null \
+fetch_remote_version() {  # 两个源都查，取较大的版本（镜像同步有延迟）
+    local a="" b=""
+    a="$(curl -fsSL --connect-timeout 8 --max-time 20 "$MIRROR_URL" 2>/dev/null \
         | grep -m1 '^SCRIPT_VERSION=' | sed 's/[^0-9.]//g')"
-    if [ -z "$v" ]; then
-        v="$(curl -fsSL --connect-timeout 8 --max-time 20 "$SCRIPT_URL" 2>/dev/null \
-            | grep -m1 '^SCRIPT_VERSION=' | sed 's/[^0-9.]//g')"
+    b="$(curl -fsSL --connect-timeout 8 --max-time 20 "$SCRIPT_URL" 2>/dev/null \
+        | grep -m1 '^SCRIPT_VERSION=' | sed 's/[^0-9.]//g')"
+    if [ -n "$a" ] && [ -n "$b" ]; then
+        if version_gt "$b" "$a"; then printf '%s' "$b"; else printf '%s' "$a"; fi
+    else
+        printf '%s' "${a:-$b}"
     fi
-    printf '%s' "$v"
 }
 
 version_gt() {  # $1 > $2 时返回 0
@@ -1402,19 +1404,34 @@ update_script() {
         die "当前不是以文件方式运行或文件不可写，无法自我更新。请先把脚本保存到本地再执行 --update"
     fi
 
-    local tmp source="" rv
+    local tmp alt source="" rv="" arv
     tmp="$(mktemp 2>/dev/null)" || die "无法创建临时文件"
 
+    # 先试镜像（境内快）；镜像版本不高于本地时，再取官方源，避免同步延迟把新版判成"已是最新"
     if curl -fsSL --connect-timeout 8 --max-time 30 "$MIRROR_URL" -o "$tmp" 2>/dev/null && valid_script "$tmp"; then
         source="Gitee 镜像"
-    elif curl -fsSL --connect-timeout 8 --max-time 30 "$SCRIPT_URL" -o "$tmp" 2>/dev/null && valid_script "$tmp"; then
-        source="GitHub"
+        rv="$(grep -m1 '^SCRIPT_VERSION=' "$tmp" | sed 's/[^0-9.]//g')"
     else
+        : >"$tmp"
+    fi
+
+    if [ -z "$rv" ] || ! version_gt "$rv" "$SCRIPT_VERSION"; then
+        alt="$(mktemp 2>/dev/null)" || alt=""
+        if [ -n "$alt" ] && curl -fsSL --connect-timeout 8 --max-time 30 "$SCRIPT_URL" -o "$alt" 2>/dev/null && valid_script "$alt"; then
+            arv="$(grep -m1 '^SCRIPT_VERSION=' "$alt" | sed 's/[^0-9.]//g')"
+            if [ -z "$rv" ] || version_gt "$arv" "$rv"; then
+                cat "$alt" >"$tmp"
+                rv="$arv"
+                source="GitHub"
+            fi
+        fi
+        [ -n "$alt" ] && rm -f "$alt"
+    fi
+
+    if [ -z "$rv" ] || ! [ -s "$tmp" ]; then
         rm -f "$tmp"
         die "脚本下载失败（镜像与官方源均不可用，请检查网络）"
     fi
-
-    rv="$(grep -m1 '^SCRIPT_VERSION=' "$tmp" | sed 's/[^0-9.]//g')"
     if ! version_gt "$rv" "$SCRIPT_VERSION"; then
         rm -f "$tmp"
         ok "当前已是最新版本 v$SCRIPT_VERSION"
