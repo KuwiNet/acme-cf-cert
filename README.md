@@ -66,6 +66,25 @@ curl -fsSL https://raw.githubusercontent.com/KuwiNet/acme-cf-cert/main/install.s
 | `porkbun` | Porkbun | `dns_porkbun` | `PORKBUN_API_KEY` `PORKBUN_SECRET_API_KEY` | - |
 | `manual` | 手动 DNS（任意服务商/自建 DNS） | 手工验证 | - | - |
 
+### 多个服务商并存
+
+凭据是**按服务商分别保存**的，同一个配置文件里可以同时存好几家的凭据；域名组可以各自指定服务商，互不影响。
+
+```bash
+# 组 1 用 Cloudflare
+./acme_cert.sh -p cloudflare --cred CF_Token=xxx -d "example.com,*.example.com" -e me@x.com -y
+# 组 2 用阿里云（CF 的凭据不会被清掉）
+./acme_cert.sh -p aliyun --cred Ali_Key=xxx --cred Ali_Secret=yyy -d "shop.com" -e me@x.com -y
+# 之后改绑第 1 组
+./acme_cert.sh --bind 1 -p dnspod --cred DP_Id=xxx --cred DP_Key=yyy
+```
+
+- `-d` 和 `-p` 一起用：把新建的域名组绑到该服务商；只用 `-d`，该组沿用**默认服务商**。
+- `--bind N -p NAME`：改绑已有组（`N` 就是 `--list` 里的编号，也可以直接写域名）。此模式下 `-p` 只表示目标服务商，**不改默认服务商**。
+- `--renew` 会逐组按各自的服务商续期；`--list` 表格里每个组都带服务商列。
+- 自动续期的凭据由 acme.sh 存在各自证书目录里，混用服务商不影响 acme.sh 的定时任务；`manual` 组例外，仍需人工重签。
+- 想一次性清掉所有服务商凭据用 `--clean-auth`。
+
 ### 自建服务商（不内置也能用）
 
 acme.sh 自带 200+ 家 dnsapi（名字见 [dnsapi 目录](https://github.com/acmesh-official/acme.sh/tree/master/dnsapi)），脚本没内置的可以运行时注册，不用改代码：
@@ -109,6 +128,7 @@ acme.sh 自带 200+ 家 dnsapi（名字见 [dnsapi 目录](https://github.com/ac
 | `./acme_cert.sh --providers` | 列出内置 + 自建的 DNS 服务商及其凭据变量 |
 | `./acme_cert.sh --add-provider NAME --dnsapi dns_xxx` | 注册自建服务商（凭据用 `--cred` 一起给） |
 | `./acme_cert.sh --remove-provider NAME` | 移除自建服务商 |
+| `./acme_cert.sh --bind N -p NAME` | 把第 N 个域名组绑定到该服务商（不改默认服务商） |
 | `./acme_cert.sh --version` / `-V` | 版本号 |
 
 ## 参数
@@ -129,6 +149,7 @@ acme.sh 自带 200+ 家 dnsapi（名字见 [dnsapi 目录](https://github.com/ac
 | `--dnsapi dns_xxx` | 注册自建服务商（等价 `--add-provider`，名称取 `dns_` 之后的部分） |
 | `--label NAME` | 自建服务商的显示名 |
 | `--cred-optional KEY[=VALUE]` | 自建服务商的可选变量，可重复 |
+| `--bind N` | 域名组编号（`--list` 里的 #）或域名，配合 `-p` 改绑 |
 | `--no-update-check` | 跳过脚本版本检查 |
 | `--dry-run` | 只打印将执行的 acme.sh 命令，不实际执行（不写配置、不装 cron） |
 
@@ -169,7 +190,7 @@ CF_Token=xxxx ./acme_cert.sh -p cloudflare -d "example.com" -e me@example.com -y
 | 路径 | 内容 |
 |---|---|
 | `~/.acme_cert/config.conf` | 服务商、凭据、邮箱、证书目录、密钥类型、CA、reload 命令（权限 `600`，目录 `700`） |
-| `~/.acme_cert/domains.conf` | 每行一个域名组，主域名在前；重复组不会重复写入 |
+| `~/.acme_cert/domains.conf` | 每行一个域名组，主域名在前；绑定了服务商的写成 `服务商\|域名组`，不带前缀的沿用默认服务商 |
 | `~/.acme_cert/providers.conf` | 自建服务商注册表（名称/显示名/dnsapi/变量名，权限 `600`） |
 | `~/.acme_cert/.update_check` | 版本检查缓存（24 小时内不再联网） |
 

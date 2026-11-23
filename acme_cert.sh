@@ -12,7 +12,7 @@
 # shellcheck disable=SC2086,SC2015,SC1090,SC2181
 
 SCRIPT_NAME="acme_cert.sh"
-SCRIPT_VERSION="2.1.0"
+SCRIPT_VERSION="2.2.0"
 SCRIPT_URL="https://raw.githubusercontent.com/KuwiNet/acme-cf-cert/main/acme_cert.sh"
 # acme.kuwi.net 现在只托管 install.sh（引导安装器），自更新改走 Gitee 镜像，
 # 失败再回退 GitHub raw；顺序反过来在境内会明显变慢。
@@ -85,6 +85,7 @@ OPT_OPT_CREDS=()          # --cred-optional（自建服务商的可选变量）
 OPT_PROVIDER_NAME=""      # --add-provider / --remove-provider 的服务商名
 OPT_DNSAPI=""             # --dnsapi dns_xxx
 OPT_LABEL=""              # --label 显示名
+OPT_BIND=""               # --bind 域名组编号/域名
 
 PROVIDERS="cloudflare aliyun dnspod tencent huaweicloud aws digitalocean vultr linode godaddy namecheap namesilo cloudns porkbun manual"
 EXTRA_FILE="$CONF_DIR/providers.conf"   # 自建服务商注册表（--add-provider 写入）
@@ -346,6 +347,37 @@ run_add_provider() {  # --add-provider 名称 --dnsapi dns_xxx [--label ..] [--c
     return 0
 }
 
+run_bind() {  # --bind <编号或域名> -p <服务商>：把已有域名组绑定到指定服务商
+    local sel="$OPT_BIND" gp="$OPT_PROVIDER" i=0 g idx=""
+    [ -n "$gp" ] || die "--bind 需要配合 -p 指定服务商，例如: $SCRIPT_NAME --bind 1 -p aliyun"
+    case " $PROVIDERS " in
+        *" $gp "*) : ;;
+        *) die "不支持的 DNS 服务商: $gp" ;;
+    esac
+    load_groups
+    [ ${#DGROUPS[@]} -gt 0 ] || die "还没有配置任何域名组"
+    case "$sel" in
+        ''|*[!0-9]*)
+            for g in "${DGROUPS[@]}"; do
+                [ "$g" = "$sel" ] && idx="$i"
+                i=$((i + 1))
+            done
+            [ -n "$idx" ] || die "找不到域名组: $sel（先用 --list 查看编号）" ;;
+        *)
+            if [ "$sel" -ge 1 ] 2>/dev/null && [ "$sel" -le ${#DGROUPS[@]} ]; then
+                idx=$((sel - 1))
+            else
+                die "编号超出范围（1-${#DGROUPS[@]}）"
+            fi ;;
+    esac
+    DGPROV[idx]="$gp"
+    save_groups
+    save_conf   # 一并落盘随 --bind 传入的 --cred
+    ok "已绑定: ${DGROUPS[$idx]} → $(provider_label "$gp")"
+    [ "$gp" = "manual" ] && warn "manual 模式没有自动续期，到期需手动重签" || true
+    return 0
+}
+
 run_remove_provider() {
     local name="$OPT_PROVIDER_NAME" tmp="$EXTRA_FILE.tmp.$$" line n conf_prov
     case " $EXTRA_NAMES " in
@@ -510,38 +542,103 @@ has_word() { case " $1 " in *" $2 "*) return 0 ;; esac; return 1; }
 
 group_main() { set -- $1; printf '%s' "${1:-}"; }
 
-DGROUPS=()
+DGROUPS=()          # 域名组（规范化后的域名字符串）
+DGPROV=()           # 与 DGROUPS 一一对应：服务商名；空串=沿用默认服务商
+GROUP_PROV=""       # 本次新建域名组要绑定的服务商
+
+group_provider() {  # 取域名组绑定的服务商；没绑定就回落到默认服务商
+    local g="$1" i=0 x
+    for x in ${DGROUPS[@]+"${DGROUPS[@]}"}; do
+        if [ "$x" = "$g" ]; then
+            if [ -n "${DGPROV[$i]:-}" ]; then printf '%s' "${DGPROV[$i]}"; else printf '%s' "$PROVIDER"; fi
+            return 0
+        fi
+        i=$((i + 1))
+    done
+    printf '%s' "$PROVIDER"
+}
+
+providers_in_use() {  # 默认服务商 + 各域名组绑定的服务商，去重后逐个输出
+    local p seen="" all="$PROVIDER"
+    for p in ${DGPROV[@]+"${DGPROV[@]}"}; do
+        [ -n "$p" ] && all="$all $p"
+    done
+    for p in $all; do
+        case " $seen " in *" $p "*) continue ;; esac
+        seen="$seen $p"
+        printf '%s\n' "$p"
+    done
+}
+
+save_groups() {  # 用内存里的 DGROUPS/DGPROV 重写 domains.conf
+    mkdir -p "$CONF_DIR" 2>/dev/null || die "无法创建配置目录: $CONF_DIR"
+    local tmp="$DOMAINS_FILE.tmp.$$" i=0 g p
+    {
+        printf '%s\n' "# 每行一个域名组；指定服务商的写法为: 服务商|域名组"
+        for g in ${DGROUPS[@]+"${DGROUPS[@]}"}; do
+            p="${DGPROV[$i]:-}"
+            if [ -n "$p" ]; then printf '%s|%s\n' "$p" "$g"; else printf '%s\n' "$g"; fi
+            i=$((i + 1))
+        done
+    } > "$tmp" || die "写入 $DOMAINS_FILE 失败"
+    mv -f "$tmp" "$DOMAINS_FILE" || die "保存 $DOMAINS_FILE 失败"
+    chmod 600 "$DOMAINS_FILE" 2>/dev/null || true
+    return 0
+}
+
 load_groups() {
     DGROUPS=()
+    DGPROV=()
     [ -f "$DOMAINS_FILE" ] || return 0
-    local text n
+    local text n prov g
     while IFS= read -r text || [ -n "$text" ]; do
         text="${text%$'\r'}"
         case "$text" in ''|'#'*) continue ;; esac
-        n="$(norm_group "$text")"
+        prov=""
+        g="$text"
+        case "$text" in
+            *'|'*)
+                prov="${text%%|*}"
+                g="${text#*|}"
+                case " $PROVIDERS " in
+                    *" $prov "*) : ;;
+                    *) warn "域名组里的服务商 [$prov] 未知，按默认服务商处理: $g"; prov="" ;;
+                esac ;;
+        esac
+        n="$(norm_group "$g")"
         [ -z "$n" ] && continue
         DGROUPS+=("$n")
+        DGPROV+=("$prov")
     done < "$DOMAINS_FILE"
+    return 0
 }
 
 add_group() {
-    local g="$1" old
+    local g="$1" prov="${2:-}" old i=0
     g="$(norm_group "$g")"
     [ -z "$g" ] && return 1
     if [ "$DRY_RUN" = "1" ]; then
-        info "预览模式，域名组不写入配置: $g"
+        info "预览模式，域名组不写入配置: $g${prov:+（$(provider_label "$prov")）}"
         return 0
     fi
     load_groups
     for old in ${DGROUPS[@]+"${DGROUPS[@]}"}; do
         if [ "$old" = "$g" ]; then
+            if [ -n "$prov" ] && [ "${DGPROV[$i]:-}" != "$prov" ]; then
+                DGPROV[i]="$prov"
+                save_groups
+                ok "域名组服务商已更新: $g → $(provider_label "$prov")"
+                return 0
+            fi
             info "域名组已存在，跳过保存: $g"
             return 0
         fi
+        i=$((i + 1))
     done
-    mkdir -p "$CONF_DIR" 2>/dev/null || die "无法创建配置目录: $CONF_DIR"
-    printf '%s\n' "$g" >> "$DOMAINS_FILE" || die "无法写入 $DOMAINS_FILE"
-    ok "域名组已保存: $g"
+    DGROUPS+=("$g")
+    DGPROV+=("$prov")
+    save_groups
+    if [ -n "$prov" ]; then ok "域名组已保存: $g（$(provider_label "$prov")）"; else ok "域名组已保存: $g"; fi
 }
 
 validate_domain() {
@@ -723,10 +820,11 @@ prompt_credentials() {
 }
 
 wizard() {
-    local mode="${1:-init}" newdir old_provider
+    local mode="${1:-init}" newdir
     eline
     if [ "$mode" = "edit" ]; then
         info "修改配置（直接回车保留当前值）"
+        info "域名组可单独绑定服务商: $SCRIPT_NAME --bind <编号> -p <服务商>"
     else
         info "首次运行配置向导（只需一次，之后自动复用）"
     fi
@@ -735,10 +833,8 @@ wizard() {
     if [ -z "$PROVIDER" ]; then
         choose_provider
     elif [ "$mode" = "edit" ]; then
-        if ask_yes "是否更换 DNS 服务商（当前 $(provider_label "$PROVIDER")）" n; then
-            old_provider="$PROVIDER"
+        if ask_yes "是否更换默认 DNS 服务商（当前 $(provider_label "$PROVIDER")）" n; then
             choose_provider
-            [ "$old_provider" != "$PROVIDER" ] && drop_other_creds "$PROVIDER"
         fi
     fi
 
@@ -833,7 +929,22 @@ input_domains() {
     done
 
     GROUP="$PARSED_GROUP"
-    ok "本次域名组: $GROUP"
+
+    if [ -n "$OPT_PROVIDER" ]; then
+        GROUP_PROV="$OPT_PROVIDER"
+    else
+        while :; do
+            ask_value "该域名组用哪个 DNS 服务商（回车沿用默认 $(provider_label "$PROVIDER")）" ""
+            GROUP_PROV="$REPLY_VAL"
+            [ -z "$GROUP_PROV" ] && { GROUP_PROV="$PROVIDER"; break; }
+            case " $PROVIDERS " in
+                *" $GROUP_PROV "*) break ;;
+                *) err "未知服务商: $GROUP_PROV（可用 $SCRIPT_NAME --providers 查看）" ;;
+            esac
+        done
+    fi
+
+    ok "本次域名组: $GROUP（$(provider_label "$GROUP_PROV")）"
 }
 
 # 选择本次操作的域名组
@@ -844,13 +955,13 @@ choose_group() {
     if [ -n "$OPT_DOMAIN" ]; then
         parse_domain_list "$OPT_DOMAIN" || exit 1
         GROUP="$PARSED_GROUP"
-        add_group "$GROUP"
+        add_group "$GROUP" "$OPT_PROVIDER"   # -p 给了就把该组绑到这个服务商
         return 0
     fi
 
     if [ ${#DGROUPS[@]} -eq 0 ]; then
         input_domains || exit 1
-        add_group "$GROUP"
+        add_group "$GROUP" "${GROUP_PROV:-$OPT_PROVIDER}"
         return 0
     fi
 
@@ -862,7 +973,7 @@ choose_group() {
     msg "  已保存的域名组:"
     local i=1 g ans
     for g in "${DGROUPS[@]}"; do
-        printf '    %s%d)%s %s\n' "$CYAN" "$i" "$NC" "$g"
+        printf '    %s%d)%s %s  %s\n' "$CYAN" "$i" "$NC" "$g" "$(provider_label "$(group_provider "$g")")"
         i=$((i + 1))
     done
 
@@ -874,12 +985,12 @@ choose_group() {
                 case "$ans" in
                     n|N)
                         input_domains || exit 1
-                        add_group "$GROUP"
+                        add_group "$GROUP" "${GROUP_PROV:-$OPT_PROVIDER}"
                         return 0 ;;
                     *)
                         parse_domain_list "$ans" || continue
                         GROUP="$PARSED_GROUP"
-                        add_group "$GROUP"
+                        add_group "$GROUP" "$GROUP_PROV"
                         return 0 ;;
                 esac ;;
             *)
@@ -895,7 +1006,7 @@ choose_group() {
 # ============================ 参数覆盖 / 凭据解析 ============================
 apply_overrides() {
     local pair k v
-    if [ -n "$OPT_PROVIDER" ]; then
+    if [ -n "$OPT_PROVIDER" ] && [ "$ACTION" != "bind" ]; then
         case " $PROVIDERS " in
             *" $OPT_PROVIDER "*) PROVIDER="$OPT_PROVIDER" ;;
             *) die "不支持的 DNS 服务商: $OPT_PROVIDER
@@ -925,23 +1036,23 @@ apply_overrides() {
 
 # 环境变量兜底，便于 CI / 手工临时输入：
 #   CF_Token=xxx ./acme_cert.sh -p cloudflare -d example.com -y
-resolve_creds_from_env() {
-    [ -z "$PROVIDER" ] && return 0
-    [ "$PROVIDER" = "manual" ] && return 0
-    local key _ _o envv
+resolve_creds_from_env() {  # $1=服务商（省略则用默认服务商）
+    local p="${1:-$PROVIDER}" key _ _o envv
+    [ -z "$p" ] && return 0
+    [ "$p" = "manual" ] && return 0
     while IFS='|' read -r key _ _ _o; do
         [ -z "$key" ] && continue
         if [ -z "$(get_var "$key")" ]; then
             envv="$(printenv "$key" 2>/dev/null || true)"
             [ -n "$envv" ] && set_var "$key" "$envv"
         fi
-    done < <(provider_creds "$PROVIDER")
+    done < <(provider_creds "$p")
     return 0
 }
 
 # 校验配置完整性；首次运行进入向导
 ensure_config() {
-    local missing="" k optional
+    local missing="" k optional p
 
     if [ -n "$PROVIDER" ]; then
         case " $PROVIDERS " in
@@ -951,14 +1062,16 @@ ensure_config() {
     fi
     [ -z "$PROVIDER" ] && missing="PROVIDER"
 
-    if [ -n "$PROVIDER" ] && [ "$PROVIDER" != "manual" ]; then
+    load_groups
+    for p in $(providers_in_use); do
+        [ "$p" = "manual" ] && continue
         while IFS='|' read -r k _ _ optional; do
             [ -z "$k" ] && continue
             if [ "$optional" != "1" ] && [ -z "$(get_var "$k")" ]; then
-                missing="${missing:+$missing, }$k"
+                case " $missing " in *" $k "*) : ;; *) missing="${missing:+$missing, }$k" ;; esac
             fi
-        done < <(provider_creds "$PROVIDER")
-    fi
+        done < <(provider_creds "$p")
+    done
 
     [ -z "$EMAIL" ] && missing="${missing:+$missing, }EMAIL"
     [ -z "$CERT_DIR" ] && missing="${missing:+$missing, }CERT_DIR"
@@ -1147,14 +1260,14 @@ install_acme() {
     ok "acme.sh 安装成功: $ACME"
 }
 
-check_dnsapi() {
-    [ "$PROVIDER" = "manual" ] && return 0
-    local name
-    name="$(provider_dnsapi "$PROVIDER")"
+check_dnsapi() {  # $1=服务商（省略则用默认服务商）
+    local p="${1:-$PROVIDER}" name
+    [ "$p" = "manual" ] && return 0
+    name="$(provider_dnsapi "$p")"
     if [ ! -f "$ACME_HOME/dnsapi/$name.sh" ]; then
         err "当前 acme.sh 未包含 $name（$ACME_HOME/dnsapi/$name.sh）"
         case " $EXTRA_NAMES " in
-            *" $PROVIDER "*)
+            *" $p "*)
                 err "自建服务商需自己放置该脚本，acme.sh 升级不会带上它:"
                 err "  cp <你的 $name.sh> $ACME_HOME/dnsapi/" ;;
             *) err "请先执行: $SCRIPT_NAME --update-acme" ;;
@@ -1165,14 +1278,14 @@ check_dnsapi() {
 }
 
 # ============================ 签发 / 安装 / 续期 ============================
-export_creds() {
-    [ "$PROVIDER" = "manual" ] && return 0
-    local key _ _o v
+export_creds() {  # $1=服务商（省略则用默认服务商）
+    local p="${1:-$PROVIDER}" key _ _o v
+    [ "$p" = "manual" ] && return 0
     while IFS='|' read -r key _ _ _o; do
         [ -z "$key" ] && continue
         v="$(get_var "$key")"
         [ -n "$v" ] && export "$key=$v"
-    done < <(provider_creds "$PROVIDER")
+    done < <(provider_creds "$p")
 }
 
 acme_server() {
@@ -1184,18 +1297,19 @@ acme_server() {
 }
 
 issue_group() {
-    local group="$1" main="" w rc
+    local group="$1" main="" w rc gp
     for w in $group; do
         [ -z "$main" ] && main="$w"
     done
 
-    export_creds
+    gp="$(group_provider "$group")"
+    export_creds "$gp"
 
     local args=(--issue --server "$(acme_server)")
-    if [ "$PROVIDER" = "manual" ]; then
+    if [ "$gp" = "manual" ]; then
         args+=(--dns --yes-I-know-dns-manual-mode-enough-go-ahead-please)
     else
-        args+=(--dns "$(provider_dnsapi "$PROVIDER")")
+        args+=(--dns "$(provider_dnsapi "$gp")")
     fi
     for w in $group; do
         args+=(-d "$w")
@@ -1257,13 +1371,14 @@ install_cert_group() {
 }
 
 renew_group() {
-    local group="$1" main args rc
+    local group="$1" main args rc gp
     main="$(group_main "$group")"
-    export_creds
+    gp="$(group_provider "$group")"
+    export_creds "$gp"
     args=(--renew -d "$main")
     case "$KEYLEN" in ec-*) args+=(--ecc) ;; esac
     [ "$FORCE" = "1" ] && args+=(--force)
-    [ "$PROVIDER" = "manual" ] && args+=(--yes-I-know-dns-manual-mode-enough-go-ahead-please)
+    [ "$gp" = "manual" ] && args+=(--yes-I-know-dns-manual-mode-enough-go-ahead-please)
 
     if [ "$DRY_RUN" = "1" ]; then
         info "将执行: $ACME ${args[*]}"
@@ -1281,8 +1396,13 @@ renew_group() {
 }
 
 ensure_cronjob() {
-    if [ "$PROVIDER" = "manual" ]; then
-        warn "手动 DNS 模式无法自动续期，到期前请重新执行本脚本"
+    local g p any_manual=0
+    for g in ${DGROUPS[@]+"${DGROUPS[@]}"}; do
+        p="$(group_provider "$g")"
+        [ "$p" = "manual" ] && any_manual=1
+    done
+    if [ "$any_manual" = "1" ]; then
+        warn "有域名组使用 manual（手动 DNS）模式，无法自动续期，到期前需重新执行本脚本"
         return 0
     fi
     if ! command -v crontab >/dev/null 2>&1; then
@@ -1331,7 +1451,7 @@ show_overview() {
     eline
     printf '  %s\n' "${BOLD}acme_cert.sh${NC} v$SCRIPT_VERSION"
     eline
-    kv "DNS 服务商" "$([ -n "$PROVIDER" ] && provider_label "$PROVIDER" || echo '未配置')"
+    kv "默认服务商" "$([ -n "$PROVIDER" ] && provider_label "$PROVIDER" || echo '未配置')"
     kv "管理员邮箱" "${EMAIL:-未配置}"
     kv "证书目录" "${CERT_DIR:-未配置}"
     kv "密钥类型" "$KEYLEN"
@@ -1346,7 +1466,7 @@ show_overview() {
     if [ ${#DGROUPS[@]} -eq 0 ]; then
         warn "还没有配置任何域名组"
     else
-        printf '  %-3s %-34s %-30s %s\n' "#" "域名组" "证书目录" "证书到期"
+        printf '  %-3s %-32s %-22s %-26s %s\n' "#" "域名组" "DNS 服务商" "证书目录" "证书到期"
         i=1
         for g in "${DGROUPS[@]}"; do
             main="$(group_main "$g")"
@@ -1355,7 +1475,7 @@ show_overview() {
             local disp="$cdir"
             # shellcheck disable=SC2088  # 这里就是要输出字面量 ~
             case "$disp" in "$HOME"/*) disp="~/${disp#"$HOME"/}" ;; esac
-            printf '  %-3s %-34s %-30s %s\n' "$i" "$g" "$disp" "$exp"
+            printf '  %-3s %-32s %-22s %-26s %s\n' "$i" "$g" "$(provider_label "$(group_provider "$g")")" "$disp" "$exp"
             i=$((i + 1))
         done
     fi
@@ -1697,6 +1817,7 @@ ${BOLD}命令${NC}
   --providers         列出内置与自建的 DNS 服务商及其凭据变量
   --add-provider NAME 注册自建服务商（需配 --dnsapi，凭据用 --cred）
   --remove-provider N 移除自建服务商
+  --bind N            把第 N 个域名组绑定到 -p 指定的服务商（N 见 --list）
   -h, --help          显示本帮助
   -V, --version       显示版本号
 
@@ -1720,12 +1841,14 @@ ${BOLD}选项${NC}
       --dnsapi NAME     自建服务商的 acme.sh dnsapi（dns_xxx），等价 --add-provider
       --label TEXT      自建服务商的显示名
       --cred-optional K 自建服务商的可选变量，可重复（KEY 或 KEY=VALUE）
+      --bind N          域名组编号（或域名），配合 -p 改绑该组服务商
       --no-update-check 跳过脚本版本检查
       --dry-run         只打印将要执行的 acme.sh 命令，不实际执行
 
 ${BOLD}配置文件${NC}
   $CONF_FILE  （权限 600，含凭据，请勿分享）
   $DOMAINS_FILE  （每行一个域名组，主域名在前，重复的不会重复写入）
+                  需要用其它服务商时写成: 服务商|域名组，例如 aliyun|example.com
   $EXTRA_FILE  （自建服务商注册表，--add-provider 写入）
 
 ${BOLD}示例${NC}
@@ -1738,6 +1861,11 @@ ${BOLD}示例${NC}
 
   # Cloudflare Token（环境变量）非交互签发
   CF_Token=xxxx ${SCRIPT_NAME} -p cloudflare -d "example.com" -e me@example.com -y
+
+  # 两个域名组各用自己的服务商（凭据可以并存）
+  ${SCRIPT_NAME} -p cloudflare --cred CF_Token=xxx -d example.com -e me@x.com -y
+  ${SCRIPT_NAME} -p aliyun --cred Ali_Key=xxx --cred Ali_Secret=yyy -d shop.com -e me@x.com -y
+  # 之后改绑: --bind 1 -p dnspod
 
   # 注册 acme.sh 已有、但脚本未内置的服务商，然后照常使用
   ${SCRIPT_NAME} --dnsapi dns_myprov --cred MY_API_KEY=xxx --cred-optional MY_REGION
@@ -1785,6 +1913,9 @@ parse_args() {
             --remove-provider)
                 [ $# -ge 2 ] || die "$1 缺少参数（服务商名称）"
                 OPT_PROVIDER_NAME="$2"; ACTION="remove-provider"; shift ;;
+            --bind)
+                [ $# -ge 2 ] || die "$1 缺少参数（域名组编号或域名）"
+                OPT_BIND="$2"; ACTION="bind"; shift ;;
             --dnsapi)
                 if [ $# -ge 2 ] && [ "${2#--}" = "$2" ]; then
                     OPT_DNSAPI="$2"; [ "$ACTION" = "remove-provider" ] || ACTION="add-provider"; shift
@@ -1855,7 +1986,7 @@ show_summary() {
     local group="$1" cdir
     cdir="$(cert_dir_of "$group")"
     eline
-    kv "DNS 服务商" "$(provider_label "$PROVIDER")"
+    kv "DNS 服务商" "$(provider_label "$(group_provider "$group")")"
     kv "域名组" "$group"
     kv "证书目录" "$cdir"
     kv "密钥类型" "$KEYLEN"
@@ -1888,7 +2019,7 @@ run_issue() {
     check_update
     check_dependencies
     install_acme
-    check_dnsapi || exit 1
+    check_dnsapi "$(group_provider "$GROUP")" || exit 1
 
     show_summary "$GROUP"
     if [ "$ASSUME_YES" != "1" ] && [ "$DRY_RUN" != "1" ]; then
@@ -1911,14 +2042,17 @@ run_issue() {
 run_renew() {
     ensure_config
     detect_acme || die "未检测到 acme.sh，请先执行一次签发"
-    check_dnsapi || exit 1
     load_groups
     [ ${#DGROUPS[@]} -eq 0 ] && die "还没有配置任何域名组"
 
     local g failed=0
     for g in "${DGROUPS[@]}"; do
         msg ""
-        info "处理域名组: $g"
+        info "处理域名组: $g（$(provider_label "$(group_provider "$g")")）"
+        if ! check_dnsapi "$(group_provider "$g")"; then
+            failed=1
+            continue
+        fi
         renew_group "$g" || failed=1
     done
     if [ "$failed" -eq 1 ]; then
@@ -1950,12 +2084,14 @@ main() {
         remove-provider) run_remove_provider; exit 0 ;;
     esac
     apply_overrides
-    resolve_creds_from_env
+    load_groups
+    for p in $(providers_in_use); do resolve_creds_from_env "$p"; done
 
     case "$ACTION" in
         list|status)   show_overview "$ACTION"; exit 0 ;;
         check)         do_check; exit 0 ;;
         providers)     show_providers; exit 0 ;;
+        bind)          run_bind; exit 0 ;;
         clean)         interactive_clean; exit 0 ;;
         clean-all)     clean_all; exit 0 ;;
         clean-auth)    clean_auth; exit 0 ;;
