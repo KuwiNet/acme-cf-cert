@@ -14,7 +14,11 @@
 ## 快速开始
 
 ```bash
+# 常规
 curl -fsSLO --retry 3 --retry-delay 2 https://acme.kuwi.net/acme_cert.sh && chmod +x acme_cert.sh && ./acme_cert.sh
+
+# 国内（Gitee 镜像）
+curl -fsSLO --retry 3 --retry-delay 2 https://gitee.com/kuwinet/acme-cf-cert/raw/main/acme_cert.sh && chmod +x acme_cert.sh && ./acme_cert.sh
 ```
 
 首次运行会依次询问（输入凭据时不回显）：
@@ -189,7 +193,7 @@ Let's Encrypt 对同一域名组有「每周 5 张重复证书」限制。调试
 `./acme_cert.sh --config`，或重新用 `-p` + `--cred` 跑一次。切换服务商时会自动清理其它服务商的旧凭据。
 
 **6. 提示 `当前不是以文件方式运行或文件不可写`？**
-`curl ... | bash` 这种管道执行方式没有可写的脚本文件，`--update` 用不了；请先按上面的 `curl -fsSLO --retry 3 https://acme.kuwi.net/acme_cert.sh` 保存成文件再执行。
+`curl ... | bash` 这种管道执行方式没有可写的脚本文件，`--update` 用不了；请先按上面的命令把脚本保存成文件再执行。
 
 **7. 想看最终执行的 acme.sh 命令？**
 加 `--dry-run`；或直接查看 `acme.sh` 自己的日志：`~/.acme.sh/acme.sh.log`。
