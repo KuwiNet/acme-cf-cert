@@ -17,10 +17,6 @@
 curl -fsSLO --retry 3 --retry-delay 2 https://acme.kuwi.net/acme_cert.sh && chmod +x acme_cert.sh && ./acme_cert.sh
 ```
 
-> 一个地址即可，不再区分国内外线路（CDN 自动就近回源）。
-> URL 必须带 `/acme_cert.sh` 这一段：`-O` 是从 URL 路径取文件名的，裸域名 `https://acme.kuwi.net` 会报 `Remote file name has no length!`。
-> 保留 `-f`：CDN 偶发 5xx 时 `-f` 让 curl 直接失败，而不是把错误页存成 `acme_cert.sh` 再被 `chmod +x` 执行；`--retry 3` 是给这种瞬时 503 兜底的。
-
 首次运行会依次询问（输入凭据时不回显）：
 
 1. **DNS 服务商**（编号选择，默认 Cloudflare）
