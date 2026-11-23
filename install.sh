@@ -97,6 +97,9 @@ fi
 # 允许用环境变量替换源（自建镜像 / 内网测试时可覆盖）
 SRC_GITHUB="${ACME_SRC_GITHUB:-https://raw.githubusercontent.com/KuwiNet/acme-cf-cert/main/$TARGET_NAME}"
 SRC_GITEE="${ACME_SRC_GITEE:-https://gitee.com/kuwinet/acme-cf-cert/raw/main/$TARGET_NAME}"
+# acme.kuwi.net 是自有入口（通常直接指向本仓库的 install.sh）。
+# 若该路径返回的是引导脚本本身（体积 < MIN_SIZE 或没有 SCRIPT_VERSION），
+# 探测阶段就会把它判掉，不会拿错误内容覆盖正文。
 SRC_CDN="${ACME_SRC_CDN:-https://acme.kuwi.net/$TARGET_NAME}"
 
 UA="acme-cert-install/$INSTALL_VERSION"

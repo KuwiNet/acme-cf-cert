@@ -14,10 +14,11 @@
 ## 快速开始
 
 ```bash
-# 一条命令：引导脚本自动测速选源，下载校验后保存并运行
-curl -fsSL https://gitee.com/kuwinet/acme-cf-cert/raw/main/install.sh | bash
+# 一条命令（推荐）
+curl -fsSL https://acme.kuwi.net | bash
 
-# Gitee 不可用时的备用入口
+# 备用入口：acme.kuwi.net 不通时
+curl -fsSL https://gitee.com/kuwinet/acme-cf-cert/raw/main/install.sh | bash
 curl -fsSL https://raw.githubusercontent.com/KuwiNet/acme-cf-cert/main/install.sh | bash
 ```
 
