@@ -16,6 +16,13 @@
 ```bash
 curl -fsSL https://acme.kuwi.net | bash
 ```
+
+> 脚本会下载到当前目录，之后再来（续期、加域名组、换 CA）直接跑本地文件即可，不必再走网络：
+
+```bash
+./acme_cert.sh
+```
+
 ### 备用
 ```bash
 curl -fsSL https://gitee.com/kuwinet/acme-cf-cert/raw/main/install.sh | bash
